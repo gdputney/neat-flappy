@@ -10,6 +10,7 @@ from main import (
     FIRST_PIPE_REACHED_BONUS,
     FITNESS_CENTERING_PENALTY_SCALE,
     SHAPING_SCALE,
+    ALIVE_BONUS_AFTER_FIRST_PIPE,
     InnovationTracker,
     NETWORK_INPUT_SIZE,
     SimulationConfig,
@@ -23,14 +24,15 @@ from main import (
     run_simulation,
     simulate_genome,
     normalized_gap_center_distance,
+    bounded_gap_shaping,
+    proximity_weight,
 )
 
 
 class SimulationStatsTests(unittest.TestCase):
     @staticmethod
-    def _expected_centering_penalty(result: dict, world_height: float) -> float:
+    def _expected_centering_penalty(result: dict, pipe_spacing: float) -> float:
         penalty = 0.0
-        height = world_height if world_height > 0 else 1.0
         for frame in result["frames"]:
             pipes = frame["pipes"]
             if not pipes:
@@ -43,8 +45,12 @@ class SimulationStatsTests(unittest.TestCase):
 
             next_pipe = min(ahead_pipes, key=lambda pipe: pipe["x"])
             gap_center = (next_pipe["top"] + next_pipe["bottom"]) / 2.0
-            distance = abs(frame["bird"]["y"] - gap_center)
-            penalty += FITNESS_CENTERING_PENALTY_SCALE * min(distance / height, 1.0)
+            half_gap_height = max((next_pipe["bottom"] - next_pipe["top"]) / 2.0, 1e-6)
+            abs_gap_error = abs(frame["bird"]["y"] - gap_center) / half_gap_height
+            dx_to_next_pipe = next_pipe["x"] - bird_x
+            penalty += FITNESS_CENTERING_PENALTY_SCALE * bounded_gap_shaping(abs_gap_error) * proximity_weight(
+                dx_to_next_pipe=dx_to_next_pipe, ramp_distance=pipe_spacing
+            )
         return penalty
 
     def test_generation_stats_include_pipe_and_step_metrics(self) -> None:
@@ -62,6 +68,8 @@ class SimulationStatsTests(unittest.TestCase):
             self.assertIn("best_pipes_reward", generation)
             self.assertIn("best_shaping_penalty", generation)
             self.assertIn("best_reached_first_pipe_bonus", generation)
+            self.assertIn("best_avg_abs_gap_error", generation)
+            self.assertIn("best_mean_proximity_weight", generation)
 
             genomes = generation["genomes"]
             self.assertEqual(generation["best_steps"], max(genome["steps_alive"] for genome in genomes))
@@ -86,6 +94,14 @@ class SimulationStatsTests(unittest.TestCase):
                 generation["best_reached_first_pipe_bonus"],
                 best_genome_result.get("reached_first_pipe_bonus", 0.0),
             )
+            self.assertAlmostEqual(
+                generation["best_avg_abs_gap_error"],
+                best_genome_result.get("avg_abs_gap_error", 0.0),
+            )
+            self.assertAlmostEqual(
+                generation["best_mean_proximity_weight"],
+                best_genome_result.get("mean_proximity_weight", 0.0),
+            )
 
     def test_generation_log_includes_max_steps(self) -> None:
         config = SimulationConfig(population_size=3, generations=1, max_steps=17, seed=11)
@@ -101,6 +117,7 @@ class SimulationStatsTests(unittest.TestCase):
     def test_default_shaping_scale_reduces_penalty_contribution(self) -> None:
         self.assertEqual(SimulationConfig().shaping_scale, SHAPING_SCALE)
         self.assertAlmostEqual(SimulationConfig().shaping_scale, 0.1)
+        self.assertEqual(SimulationConfig().alive_bonus_after_first_pipe, ALIVE_BONUS_AFTER_FIRST_PIPE)
 
     def test_fitness_prioritizes_pipes_passed(self) -> None:
         config = SimulationConfig(max_steps=15, seed=3)
@@ -113,8 +130,9 @@ class SimulationStatsTests(unittest.TestCase):
             result["steps_alive"]
             + (result["pipes_passed"] * 5000.0)
             + (FIRST_PIPE_REACHED_BONUS if result["reached_first_pipe_bonus"] > 0 else 0.0)
+            + result["alive_bonus"]
             - (
-                self._expected_centering_penalty(result, config.world_height)
+                self._expected_centering_penalty(result, config.pipe_spacing)
                 * config.shaping_weight
                 * config.shaping_scale
             )
@@ -194,6 +212,22 @@ class ShapingSignalTests(unittest.TestCase):
             normalized_gap_center_distance(bird=bird, pipes=[behind_pipe], world_height=800.0),
             0.0,
         )
+
+
+
+    def test_bounded_gap_shaping_is_clipped_to_unit_interval(self) -> None:
+        self.assertEqual(bounded_gap_shaping(-2.0), 0.0)
+        self.assertEqual(bounded_gap_shaping(0.0), 0.0)
+        self.assertAlmostEqual(bounded_gap_shaping(0.5), 0.25)
+        self.assertEqual(bounded_gap_shaping(1.0), 1.0)
+        self.assertEqual(bounded_gap_shaping(4.0), 1.0)
+
+    def test_proximity_weight_scales_with_distance_to_next_pipe(self) -> None:
+        ramp = 220.0
+        self.assertEqual(proximity_weight(dx_to_next_pipe=500.0, ramp_distance=ramp), 0.0)
+        self.assertAlmostEqual(proximity_weight(dx_to_next_pipe=110.0, ramp_distance=ramp), 0.5)
+        self.assertEqual(proximity_weight(dx_to_next_pipe=0.0, ramp_distance=ramp), 1.0)
+        self.assertEqual(proximity_weight(dx_to_next_pipe=-5.0, ramp_distance=ramp), 1.0)
 
 
 class FlapPolicyTests(unittest.TestCase):
