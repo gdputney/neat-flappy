@@ -1,7 +1,9 @@
 import unittest
 
 from main import (
+    FITNESS_CENTERING_PENALTY_SCALE,
     InnovationTracker,
+    NETWORK_INPUT_SIZE,
     SimulationConfig,
     adjust_compatibility_threshold,
     create_initial_genome,
@@ -12,6 +14,23 @@ from main import (
 
 
 class SimulationStatsTests(unittest.TestCase):
+    @staticmethod
+    def _expected_centering_penalty(result: dict, world_height: float) -> float:
+        penalty = 0.0
+        height = world_height if world_height > 0 else 1.0
+        for frame in result["frames"]:
+            pipes = frame["pipes"]
+            if not pipes:
+                continue
+
+            bird_x = frame["bird"]["x"]
+            ahead_pipes = [pipe for pipe in pipes if (pipe["x"] + pipe["width"]) >= bird_x]
+            next_pipe = min(ahead_pipes or pipes, key=lambda pipe: pipe["x"])
+            gap_center = (next_pipe["top"] + next_pipe["bottom"]) / 2.0
+            distance = abs(frame["bird"]["y"] - gap_center)
+            penalty += FITNESS_CENTERING_PENALTY_SCALE * min(distance / height, 1.0)
+        return penalty
+
     def test_generation_stats_include_pipe_and_step_metrics(self) -> None:
         config = SimulationConfig(population_size=6, generations=2, max_steps=20, seed=7)
 
@@ -37,19 +56,24 @@ class SimulationStatsTests(unittest.TestCase):
     def test_fitness_prioritizes_pipes_passed(self) -> None:
         config = SimulationConfig(max_steps=15, seed=3)
         tracker = InnovationTracker()
-        genome = create_initial_genome(input_size=5, output_size=1, tracker=tracker)
+        genome = create_initial_genome(input_size=NETWORK_INPUT_SIZE, output_size=1, tracker=tracker)
 
         result = simulate_genome(genome, config)
 
-        expected = (result["pipes_passed"] * 5000.0) + result["steps_alive"] + (0.0 if result["crashed"] else 25.0)
-        self.assertEqual(result["fitness"], expected)
+        expected = (
+            (result["pipes_passed"] * 5000.0)
+            + result["steps_alive"]
+            + (0.0 if result["crashed"] else 25.0)
+            - self._expected_centering_penalty(result, config.world_height)
+        )
+        self.assertAlmostEqual(result["fitness"], expected)
 
 
 class ElitismTests(unittest.TestCase):
     def test_global_top_genomes_are_carried_unchanged(self) -> None:
         tracker = InnovationTracker()
         config = SimulationConfig(population_size=16)
-        population = [create_initial_genome(input_size=5, output_size=1, tracker=tracker) for _ in range(16)]
+        population = [create_initial_genome(input_size=NETWORK_INPUT_SIZE, output_size=1, tracker=tracker) for _ in range(16)]
 
         for idx, genome in enumerate(population):
             genome.fitness = float(idx)
