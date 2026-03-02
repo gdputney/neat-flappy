@@ -22,6 +22,7 @@ NETWORK_INPUT_SIZE = 6
 NETWORK_OUTPUT_SIZE = 1
 FITNESS_CENTERING_PENALTY_SCALE = 5.0
 FIRST_PIPE_REACHED_BONUS = 200.0
+FLAP_COOLDOWN_FRAMES = 8
 
 
 @dataclass
@@ -39,6 +40,7 @@ class SimulationConfig:
     min_compatibility_threshold: float = 0.3
     flap_policy: str = "probabilistic"
     shaping_weight: float = 10.0
+    flap_cooldown_frames: int = FLAP_COOLDOWN_FRAMES
 
 
 def decide_flap(output: float, policy: str, is_flapping: bool = False) -> bool:
@@ -117,7 +119,7 @@ def normalized_gap_center_distance(bird: Bird, pipes: list[Pipe], world_height: 
 
 
 def simulate_genome(genome: Genome, config: SimulationConfig) -> dict[str, Any]:
-    bird = Bird(world_width=config.world_width, world_height=config.world_height)
+    bird = Bird(world_width=config.world_width, world_height=config.world_height, flap_cooldown_frames=config.flap_cooldown_frames)
     first_pipe = Pipe(x=config.world_width + 100.0, world_height=config.world_height)
     pipes = [first_pipe]
     passed_ids: set[int] = set()
@@ -143,7 +145,7 @@ def simulate_genome(genome: Genome, config: SimulationConfig) -> dict[str, Any]:
         flap = decide_flap(output, config.flap_policy, is_flapping=is_flapping)
         is_flapping = flap
         if flap:
-            bird.jump()
+            flap = bird.jump()
 
         previous_pipe_x = {id(pipe): pipe.x for pipe in pipes}
 
@@ -156,13 +158,13 @@ def simulate_genome(genome: Genome, config: SimulationConfig) -> dict[str, Any]:
         if bird.y <= 0:
             alive = False
             crashed = True
-            death_reason = "ceiling"
+            death_reason = "hit_ceiling"
             death_bird_y = bird.y
             death_bird_velocity = bird.velocity
         elif bird.y >= config.world_height:
             alive = False
             crashed = True
-            death_reason = "ground"
+            death_reason = "hit_ground"
             death_bird_y = bird.y
             death_bird_velocity = bird.velocity
 
@@ -171,7 +173,7 @@ def simulate_genome(genome: Genome, config: SimulationConfig) -> dict[str, Any]:
                 alive = False
                 crashed = True
                 if death_reason is None:
-                    death_reason = "pipe"
+                    death_reason = "hit_pipe"
                     death_bird_y = bird.y
                     death_bird_velocity = bird.velocity
             previous_x = previous_pipe_x.get(id(pipe), pipe.x)
@@ -209,7 +211,7 @@ def simulate_genome(genome: Genome, config: SimulationConfig) -> dict[str, Any]:
         steps += 1
 
     if death_reason is None:
-        death_reason = "unknown"
+        death_reason = "max_steps"
         death_bird_y = bird.y
         death_bird_velocity = bird.velocity
 
@@ -245,7 +247,7 @@ def run_debug_one_episode(config: SimulationConfig, interval: int = 20) -> dict[
 
     tracker = InnovationTracker()
     genome = create_initial_genome(input_size=NETWORK_INPUT_SIZE, output_size=NETWORK_OUTPUT_SIZE, tracker=tracker)
-    bird = Bird(world_width=config.world_width, world_height=config.world_height)
+    bird = Bird(world_width=config.world_width, world_height=config.world_height, flap_cooldown_frames=config.flap_cooldown_frames)
     first_pipe = Pipe(x=config.world_width + 100.0, world_height=config.world_height)
     pipes = [first_pipe]
     passed_ids: set[int] = set()
@@ -285,7 +287,7 @@ def run_debug_one_episode(config: SimulationConfig, interval: int = 20) -> dict[
         flap = decide_flap(output, config.flap_policy, is_flapping=is_flapping)
         is_flapping = flap
         if flap:
-            bird.jump()
+            flap = bird.jump()
 
         previous_pipe_x = {id(pipe): pipe.x for pipe in pipes}
         bird.update_physics()
@@ -357,7 +359,7 @@ def run_debug_one_episode(config: SimulationConfig, interval: int = 20) -> dict[
 
     tracker = InnovationTracker()
     genome = create_initial_genome(input_size=NETWORK_INPUT_SIZE, output_size=NETWORK_OUTPUT_SIZE, tracker=tracker)
-    bird = Bird(world_width=config.world_width, world_height=config.world_height)
+    bird = Bird(world_width=config.world_width, world_height=config.world_height, flap_cooldown_frames=config.flap_cooldown_frames)
     first_pipe = Pipe(x=config.world_width + 100.0, world_height=config.world_height)
     pipes = [first_pipe]
     passed_ids: set[int] = set()
@@ -397,7 +399,7 @@ def run_debug_one_episode(config: SimulationConfig, interval: int = 20) -> dict[
         flap = decide_flap(output, config.flap_policy, is_flapping=is_flapping)
         is_flapping = flap
         if flap:
-            bird.jump()
+            flap = bird.jump()
 
         previous_pipe_x = {id(pipe): pipe.x for pipe in pipes}
         bird.update_physics()
@@ -407,12 +409,12 @@ def run_debug_one_episode(config: SimulationConfig, interval: int = 20) -> dict[
         pipes = [pipe for pipe in pipes if (pipe.x + pipe.width) > -5]
 
         if bird.y <= 0:
-            death_reason = "ceiling"
+            death_reason = "hit_ceiling"
             death_bird_y = bird.y
             death_bird_velocity = bird.velocity
             break
         if bird.y >= config.world_height:
-            death_reason = "ground"
+            death_reason = "hit_ground"
             death_bird_y = bird.y
             death_bird_velocity = bird.velocity
             break
@@ -421,7 +423,7 @@ def run_debug_one_episode(config: SimulationConfig, interval: int = 20) -> dict[
         for pipe in pipes:
             if bird_hits_pipe(bird, pipe):
                 crashed_into_pipe = True
-                death_reason = "pipe"
+                death_reason = "hit_pipe"
                 death_bird_y = bird.y
                 death_bird_velocity = bird.velocity
             previous_x = previous_pipe_x.get(id(pipe), pipe.x)
@@ -436,7 +438,7 @@ def run_debug_one_episode(config: SimulationConfig, interval: int = 20) -> dict[
             break
 
     if death_reason is None:
-        death_reason = "unknown"
+        death_reason = "max_steps"
         death_bird_y = bird.y
         death_bird_velocity = bird.velocity
 
@@ -872,6 +874,12 @@ def parse_args() -> argparse.Namespace:
         help="Policy for converting network output to flap action",
     )
     parser.add_argument(
+        "--flap-cooldown-frames",
+        type=int,
+        default=FLAP_COOLDOWN_FRAMES,
+        help="Frames to wait after a flap before another flap is allowed",
+    )
+    parser.add_argument(
         "--debug-one",
         action="store_true",
         help="Run exactly one episode with periodic debug logging",
@@ -881,7 +889,11 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    config = SimulationConfig(seed=args.seed, flap_policy=args.flap_policy)
+    config = SimulationConfig(
+        seed=args.seed,
+        flap_policy=args.flap_policy,
+        flap_cooldown_frames=max(0, args.flap_cooldown_frames),
+    )
 
     if args.replay is not None:
         replay_data, generation_metadata = replay_from_genome(args.replay, config)

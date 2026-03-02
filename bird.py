@@ -35,19 +35,32 @@ class Bird:
     gravity: float = 0.5
     jump_strength: float = -8.0
     max_fall_speed: float = 10.0
+    flap_cooldown_frames: int = 8
     world_width: float = 500.0
     world_height: float = 800.0
     _last_y: float = field(default=250.0, init=False, repr=False)
+    _flap_cooldown: int = field(default=0, init=False, repr=False)
 
-    def jump(self) -> None:
-        """Apply an instant upward impulse."""
+    def jump(self) -> bool:
+        """Apply an instant upward impulse when cooldown allows it."""
+        if self._flap_cooldown > 0:
+            return False
         self.velocity = self.jump_strength
+        self._flap_cooldown = max(0, self.flap_cooldown_frames)
+        return True
 
-    def update_physics(self) -> None:
-        """Advance one simulation step using simple gravity physics."""
+    def update(self) -> None:
+        """Advance one simulation step and tick down flap cooldown."""
+        if self._flap_cooldown > 0:
+            self._flap_cooldown -= 1
+
         self._last_y = self.y
         self.velocity = min(self.velocity + self.gravity, self.max_fall_speed)
         self.y += self.velocity
+
+    def update_physics(self) -> None:
+        """Backward-compatible alias for update()."""
+        self.update()
 
     def get_inputs(self, pipes: Iterable[PipeLike]) -> list[float]:
         """Return clipped neural-network inputs for NEAT.
