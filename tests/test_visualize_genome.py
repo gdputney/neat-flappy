@@ -1,4 +1,5 @@
 import json
+import re
 import subprocess
 import tempfile
 import unittest
@@ -48,6 +49,8 @@ class VisualizeGenomeScriptTests(unittest.TestCase):
             self.assertIn("output_2", dot_text)
             self.assertIn("+1.25", dot_text)
             self.assertIn("-0.75", dot_text)
+            self.assertRegex(dot_text, r"(?m)^\s*n\d+\s+\[label=")
+            self.assertIn("->", dot_text)
 
 
 if __name__ == "__main__":
