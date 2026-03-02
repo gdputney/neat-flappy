@@ -65,8 +65,8 @@ def node_label(node: dict[str, Any], index: int) -> str:
 
 
 def dot_from_genome(genome: dict[str, Any]) -> tuple[str, int, int]:
-    nodes = genome["node_genes"]
-    connections = genome["connection_genes"]
+    nodes = genome.get("node_genes", [])
+    connections = genome.get("connection_genes", [])
 
     header_lines = [
         "digraph Genome {",
