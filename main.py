@@ -130,6 +130,9 @@ def simulate_genome(genome: Genome, config: SimulationConfig) -> dict[str, Any]:
     average_centering_penalty = 0.0
     is_flapping = False
     reached_first_pipe = False
+    death_reason: str | None = None
+    death_bird_y: float | None = None
+    death_bird_velocity: float | None = None
 
     while alive and steps < config.max_steps:
         if pipes[-1].x < config.world_width - config.pipe_spacing:
@@ -150,14 +153,27 @@ def simulate_genome(genome: Genome, config: SimulationConfig) -> dict[str, Any]:
 
         pipes = [pipe for pipe in pipes if (pipe.x + pipe.width) > -5]
 
-        if bird.y < 0 or bird.y > config.world_height:
+        if bird.y < 0:
             alive = False
             crashed = True
+            death_reason = "hit_ceiling"
+            death_bird_y = bird.y
+            death_bird_velocity = bird.velocity
+        elif bird.y > config.world_height:
+            alive = False
+            crashed = True
+            death_reason = "hit_ground"
+            death_bird_y = bird.y
+            death_bird_velocity = bird.velocity
 
         for pipe in pipes:
             if bird_hits_pipe(bird, pipe):
                 alive = False
                 crashed = True
+                if death_reason is None:
+                    death_reason = "hit_pipe"
+                    death_bird_y = bird.y
+                    death_bird_velocity = bird.velocity
             previous_x = previous_pipe_x.get(id(pipe), pipe.x)
             if pipe_crossed_bird(previous_x, pipe.x, pipe.width, bird.x) and id(pipe) not in passed_ids:
                 passed_ids.add(id(pipe))
@@ -192,6 +208,11 @@ def simulate_genome(genome: Genome, config: SimulationConfig) -> dict[str, Any]:
         )
         steps += 1
 
+    if death_reason is None and not crashed and steps >= config.max_steps:
+        death_reason = "max_steps"
+        death_bird_y = bird.y
+        death_bird_velocity = bird.velocity
+
     steps_survived = float(steps)
     pipes_reward = float(pipes_passed * 5000.0)
     reached_first_pipe_bonus = FIRST_PIPE_REACHED_BONUS if reached_first_pipe else 0.0
@@ -210,6 +231,122 @@ def simulate_genome(genome: Genome, config: SimulationConfig) -> dict[str, Any]:
         "crashed": crashed,
         "centering_penalty": centering_penalty,
         "average_centering_penalty": average_centering_penalty,
+        "death_reason": death_reason,
+        "death_bird_y": death_bird_y,
+        "death_bird_velocity": death_bird_velocity,
+        "screen_bounds": {"y_min": 0.0, "y_max": config.world_height},
+    }
+
+
+def run_debug_one_episode(config: SimulationConfig, interval: int = 20) -> dict[str, Any]:
+    """Run a single random genome episode and print periodic state snapshots."""
+    if config.seed is not None:
+        random.seed(config.seed)
+
+    tracker = InnovationTracker()
+    genome = create_initial_genome(input_size=NETWORK_INPUT_SIZE, output_size=NETWORK_OUTPUT_SIZE, tracker=tracker)
+    bird = Bird(world_width=config.world_width, world_height=config.world_height)
+    first_pipe = Pipe(x=config.world_width + 100.0, world_height=config.world_height)
+    pipes = [first_pipe]
+    passed_ids: set[int] = set()
+    reached_first_pipe = False
+    death_reason: str | None = None
+    death_bird_y: float | None = None
+    death_bird_velocity: float | None = None
+    pipes_passed = 0
+    is_flapping = False
+
+    print(f"[debug-one] initial_pipe_spawn_x={first_pipe.x:.2f} initial_pipe_speed={first_pipe.speed:.2f}")
+
+    steps_executed = 0
+    for step in range(config.max_steps):
+        steps_executed = step + 1
+        if pipes[-1].x < config.world_width - config.pipe_spacing:
+            pipes.append(Pipe(x=config.world_width + 50.0, world_height=config.world_height))
+
+        ahead_pipes = [pipe for pipe in pipes if (pipe.x + pipe.width) >= bird.x]
+        next_pipe = min(ahead_pipes, key=lambda pipe: pipe.x) if ahead_pipes else None
+        next_pipe_x = next_pipe.x if next_pipe is not None else float("nan")
+        dx_to_next_pipe = next_pipe_x - bird.x if next_pipe is not None else float("nan")
+        if step % interval == 0:
+            print(
+                "[debug-one] "
+                f"t={step} "
+                f"bird_x={bird.x:.2f} "
+                f"bird_y={bird.y:.2f} "
+                f"next_pipe_x={next_pipe_x:.2f} "
+                f"dx_to_next_pipe={dx_to_next_pipe:.2f} "
+                f"reached_first_pipe={reached_first_pipe} "
+                f"pipes_passed={pipes_passed}"
+            )
+
+        inputs = bird.get_inputs(pipes)
+        output = genome.activate(inputs)[0]
+        flap = decide_flap(output, config.flap_policy, is_flapping=is_flapping)
+        is_flapping = flap
+        if flap:
+            bird.jump()
+
+        previous_pipe_x = {id(pipe): pipe.x for pipe in pipes}
+        bird.update_physics()
+        for pipe in pipes:
+            pipe.update()
+
+        pipes = [pipe for pipe in pipes if (pipe.x + pipe.width) > -5]
+
+        if bird.y < 0:
+            death_reason = "hit_ceiling"
+            death_bird_y = bird.y
+            death_bird_velocity = bird.velocity
+            break
+        if bird.y > config.world_height:
+            death_reason = "hit_ground"
+            death_bird_y = bird.y
+            death_bird_velocity = bird.velocity
+            break
+
+        crashed_into_pipe = False
+        for pipe in pipes:
+            if bird_hits_pipe(bird, pipe):
+                crashed_into_pipe = True
+                death_reason = "hit_pipe"
+                death_bird_y = bird.y
+                death_bird_velocity = bird.velocity
+            previous_x = previous_pipe_x.get(id(pipe), pipe.x)
+            if pipe_crossed_bird(previous_x, pipe.x, pipe.width, bird.x) and id(pipe) not in passed_ids:
+                passed_ids.add(id(pipe))
+                pipes_passed += 1
+
+        if not reached_first_pipe and first_pipe.x <= bird.x:
+            reached_first_pipe = True
+
+        if crashed_into_pipe:
+            break
+
+    if death_reason is None:
+        death_reason = "max_steps"
+        death_bird_y = bird.y
+        death_bird_velocity = bird.velocity
+
+    print(
+        "[debug-one] final "
+        f"steps_executed={steps_executed} "
+        f"reached_first_pipe={reached_first_pipe} "
+        f"pipes_passed={pipes_passed} "
+        f"death_reason={death_reason} "
+        f"death_bird_y={death_bird_y:.2f} "
+        f"death_bird_vel={death_bird_velocity:.2f} "
+        f"screen_bounds_y=[0.00,{config.world_height:.2f}]"
+    )
+
+    return {
+        "steps_executed": steps_executed,
+        "reached_first_pipe": reached_first_pipe,
+        "pipes_passed": pipes_passed,
+        "death_reason": death_reason,
+        "death_bird_y": death_bird_y,
+        "death_bird_velocity": death_bird_velocity,
+        "screen_bounds": {"y_min": 0.0, "y_max": config.world_height},
     }
 
 
