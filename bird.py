@@ -57,8 +57,9 @@ class Bird:
           1) bird y position normalized by world height
           2) bird vertical velocity normalized by max fall speed
           3) horizontal distance to next pipe normalized by world width
-          4) vertical distance from bird to next gap top normalized by height
-          5) vertical distance from bird to next gap bottom normalized by height
+          4) signed offset from bird y to next gap center normalized by height
+          5) vertical distance from bird to next gap top normalized by height
+          6) vertical distance from bird to next gap bottom normalized by height
         """
         pipe_list = list(pipes)
         ahead_pipes = [p for p in pipe_list if p.x + 1 >= self.x]
@@ -72,9 +73,12 @@ class Bird:
                 1.0,
                 0.0,
                 0.0,
+                0.0,
             ]
 
         horizontal_distance = next_pipe.x - self.x
+        gap_center = (next_pipe.top + next_pipe.bottom) / 2.0
+        to_gap_center = self.y - gap_center
         to_gap_top = self.y - next_pipe.top
         to_gap_bottom = next_pipe.bottom - self.y
 
@@ -82,6 +86,7 @@ class Bird:
             self._normalize_height(self.y),
             self._normalize_velocity(self.velocity),
             self._clamp(horizontal_distance / self.world_width, -1.0, 1.0),
+            self._clamp(to_gap_center / self.world_height, -1.0, 1.0),
             self._clamp(to_gap_top / self.world_height, -1.0, 1.0),
             self._clamp(to_gap_bottom / self.world_height, -1.0, 1.0),
         ]

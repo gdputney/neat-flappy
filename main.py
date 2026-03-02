@@ -18,6 +18,11 @@ from neat_core import Genome, InnovationTracker
 from pipe import Pipe
 
 
+NETWORK_INPUT_SIZE = 6
+NETWORK_OUTPUT_SIZE = 1
+FITNESS_CENTERING_PENALTY_SCALE = 0.2
+
+
 @dataclass
 class SimulationConfig:
     population_size: int = 40
@@ -59,7 +64,10 @@ def create_initial_genome(input_size: int, output_size: int, tracker: Innovation
 
 
 def create_population(size: int, tracker: InnovationTracker) -> list[Genome]:
-    return [create_initial_genome(input_size=5, output_size=1, tracker=tracker) for _ in range(size)]
+    return [
+        create_initial_genome(input_size=NETWORK_INPUT_SIZE, output_size=NETWORK_OUTPUT_SIZE, tracker=tracker)
+        for _ in range(size)
+    ]
 
 
 def bird_hits_pipe(bird: Bird, pipe: Pipe) -> bool:
@@ -67,6 +75,19 @@ def bird_hits_pipe(bird: Bird, pipe: Pipe) -> bool:
     if not within_x:
         return False
     return not (pipe.top <= bird.y <= pipe.bottom)
+
+
+def normalized_gap_center_distance(bird: Bird, pipes: list[Pipe], world_height: float) -> float:
+    """Return normalized absolute distance from bird y to nearest upcoming gap center."""
+    if not pipes:
+        return 0.0
+
+    ahead_pipes = [pipe for pipe in pipes if (pipe.x + pipe.width) >= bird.x]
+    next_pipe = min(ahead_pipes or pipes, key=lambda pipe: pipe.x)
+    gap_center = (next_pipe.top + next_pipe.bottom) / 2.0
+    distance = abs(bird.y - gap_center)
+    height = world_height if world_height > 0 else 1.0
+    return min(distance / height, 1.0)
 
 
 def simulate_genome(genome: Genome, config: SimulationConfig) -> dict[str, Any]:
@@ -78,6 +99,7 @@ def simulate_genome(genome: Genome, config: SimulationConfig) -> dict[str, Any]:
     steps = 0
     pipes_passed = 0
     crashed = False
+    centering_penalty = 0.0
 
     while alive and steps < config.max_steps:
         if pipes[-1].x < config.world_width - config.pipe_spacing:
@@ -106,6 +128,12 @@ def simulate_genome(genome: Genome, config: SimulationConfig) -> dict[str, Any]:
                 passed_ids.add(id(pipe))
                 pipes_passed += 1
 
+        centering_penalty += FITNESS_CENTERING_PENALTY_SCALE * normalized_gap_center_distance(
+            bird,
+            pipes,
+            config.world_height,
+        )
+
         frames.append(
             {
                 "step": steps,
@@ -129,7 +157,7 @@ def simulate_genome(genome: Genome, config: SimulationConfig) -> dict[str, Any]:
     steps_survived = float(steps)
     pipe_reward = float(pipes_passed * 5000.0)
     alive_bonus = 25.0 if not crashed else 0.0
-    genome.fitness = pipe_reward + steps_survived + alive_bonus
+    genome.fitness = pipe_reward + steps_survived + alive_bonus - centering_penalty
     return {
         "fitness": genome.fitness,
         "steps_alive": steps,
