@@ -94,3 +94,14 @@ Then visit `http://localhost:8000/web/` to view the replay on an HTML canvas wit
 - Play/Pause control
 - Playback speed slider
 - Overlay text showing score and generation
+
+## Visualize a saved genome
+
+Generate a DOT + PNG network visualization from a saved best genome:
+
+```bash
+python tools/visualize_genome.py runs/run_<timestamp>/best_genome.json
+```
+
+This writes `best_genome.dot` and `best_genome.png` in the current directory by default.
+
