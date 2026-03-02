@@ -29,6 +29,7 @@ FLAP_OFF_THRESHOLD = 0.2
 VEL_MIN = -12.0
 VEL_MAX = 12.0
 CEILING_TOUCH_PENALTY = 200.0
+ALIVE_BONUS_AFTER_FIRST_PIPE = 0.2
 
 
 @dataclass
@@ -53,6 +54,7 @@ class SimulationConfig:
     velocity_min: float = VEL_MIN
     velocity_max: float = VEL_MAX
     ceiling_touch_penalty: float = CEILING_TOUCH_PENALTY
+    alive_bonus_after_first_pipe: float = ALIVE_BONUS_AFTER_FIRST_PIPE
     debug_no_flap: bool = False
     debug_always_flap: bool = False
 
@@ -138,6 +140,21 @@ def normalized_gap_center_distance(bird: Bird, pipes: list[Pipe], world_height: 
     return min(distance / height, 1.0)
 
 
+def proximity_weight(dx_to_next_pipe: float, ramp_distance: float) -> float:
+    """Scale shaping from 0 (far) to 1 (at/inside next pipe)."""
+    if ramp_distance <= 0:
+        return 1.0
+    if dx_to_next_pipe <= 0:
+        return 1.0
+    return max(0.0, min(1.0, 1.0 - (dx_to_next_pipe / ramp_distance)))
+
+
+def bounded_gap_shaping(abs_gap_error: float) -> float:
+    """Return clipped quadratic shaping value bounded to [0, 1]."""
+    clipped_error = max(0.0, min(1.0, abs_gap_error))
+    return clipped_error * clipped_error
+
+
 def simulate_genome(genome: Genome, config: SimulationConfig) -> dict[str, Any]:
     bird = Bird(
         world_width=config.world_width,
@@ -158,10 +175,15 @@ def simulate_genome(genome: Genome, config: SimulationConfig) -> dict[str, Any]:
     average_centering_penalty = 0.0
     is_flapping = False
     reached_first_pipe = False
+    alive_bonus = 0.0
     ceiling_touches = 0
     death_reason: str | None = None
     death_bird_y: float | None = None
     death_bird_velocity: float | None = None
+    abs_gap_error_sum = 0.0
+    abs_gap_error_count = 0
+    proximity_weight_sum = 0.0
+    proximity_weight_count = 0
 
     while alive and steps < config.max_steps:
         if pipes[-1].x < config.world_width - config.pipe_spacing:
@@ -216,14 +238,30 @@ def simulate_genome(genome: Genome, config: SimulationConfig) -> dict[str, Any]:
                 passed_ids.add(id(pipe))
                 pipes_passed += 1
 
-        centering_penalty += FITNESS_CENTERING_PENALTY_SCALE * normalized_gap_center_distance(
-            bird,
-            pipes,
-            config.world_height,
-        )
-
         if not reached_first_pipe and first_pipe.x <= bird.x:
             reached_first_pipe = True
+
+        ahead_pipes = [pipe for pipe in pipes if (pipe.x + pipe.width) >= bird.x]
+        if ahead_pipes:
+            next_pipe = min(ahead_pipes, key=lambda pipe: pipe.x)
+            gap_center = (next_pipe.top + next_pipe.bottom) / 2.0
+            half_gap_height = max((next_pipe.bottom - next_pipe.top) / 2.0, 1e-6)
+            abs_gap_error = abs(bird.y - gap_center) / half_gap_height
+            dx_to_next_pipe = next_pipe.x - bird.x
+            proximity = proximity_weight(dx_to_next_pipe=dx_to_next_pipe, ramp_distance=config.pipe_spacing)
+            centering_penalty += (
+                FITNESS_CENTERING_PENALTY_SCALE
+                * bounded_gap_shaping(abs_gap_error)
+                * proximity
+            )
+            proximity_weight_sum += proximity
+            proximity_weight_count += 1
+            if reached_first_pipe:
+                abs_gap_error_sum += abs_gap_error
+                abs_gap_error_count += 1
+
+        if reached_first_pipe:
+            alive_bonus += config.alive_bonus_after_first_pipe
 
         frames.append(
             {
@@ -256,7 +294,16 @@ def simulate_genome(genome: Genome, config: SimulationConfig) -> dict[str, Any]:
     shaping_penalty = centering_penalty * config.shaping_weight * config.shaping_scale
     ceiling_penalty = ceiling_touches * config.ceiling_touch_penalty
     average_centering_penalty = (centering_penalty / steps_survived) if steps_survived > 0 else 0.0
-    genome.fitness = steps_survived + pipes_reward + reached_first_pipe_bonus - shaping_penalty - ceiling_penalty
+    avg_abs_gap_error = (abs_gap_error_sum / abs_gap_error_count) if abs_gap_error_count > 0 else 0.0
+    mean_proximity_weight = (proximity_weight_sum / proximity_weight_count) if proximity_weight_count > 0 else 0.0
+    genome.fitness = (
+        steps_survived
+        + pipes_reward
+        + reached_first_pipe_bonus
+        + alive_bonus
+        - shaping_penalty
+        - ceiling_penalty
+    )
     return {
         "fitness": genome.fitness,
         "steps_alive": steps,
@@ -267,10 +314,13 @@ def simulate_genome(genome: Genome, config: SimulationConfig) -> dict[str, Any]:
         "ceiling_penalty": ceiling_penalty,
         "ceiling_touches": ceiling_touches,
         "reached_first_pipe_bonus": reached_first_pipe_bonus,
+        "alive_bonus": alive_bonus,
         "frames": frames,
         "crashed": crashed,
         "centering_penalty": centering_penalty,
         "average_centering_penalty": average_centering_penalty,
+        "avg_abs_gap_error": avg_abs_gap_error,
+        "mean_proximity_weight": mean_proximity_weight,
         "death_reason": death_reason,
         "death_bird_y": death_bird_y,
         "death_bird_velocity": death_bird_velocity,
@@ -540,6 +590,8 @@ def run_simulation(config: SimulationConfig) -> dict[str, Any]:
         mean_pipes_passed = sum(pipes_passed) / len(pipes_passed)
         best_result = max(generation_results, key=lambda result: result["fitness"])
         best_avg_shaping_penalty = best_result.get("average_centering_penalty", 0.0)
+        best_avg_abs_gap_error = best_result.get("avg_abs_gap_error", 0.0)
+        best_mean_proximity_weight = best_result.get("mean_proximity_weight", 0.0)
         best_steps_component = best_result.get("steps", 0.0)
         best_pipes_reward = best_result.get("pipes_reward", 0.0)
         best_shaping_penalty = best_result.get("shaping_penalty", 0.0)
@@ -566,7 +618,9 @@ def run_simulation(config: SimulationConfig) -> dict[str, Any]:
             f"best_pipes_reward={best_pipes_reward:.2f} "
             f"best_shaping_penalty={best_shaping_penalty:.2f} "
             f"best_reached_first_pipe_bonus={best_first_pipe_bonus:.2f} "
-            f"best_avg_shaping_penalty={best_avg_shaping_penalty:.3f}"
+            f"best_avg_shaping_penalty={best_avg_shaping_penalty:.3f} "
+            f"best_avg_abs_gap_error={best_avg_abs_gap_error:.3f} "
+            f"best_mean_proximity_weight={best_mean_proximity_weight:.3f}"
         )
 
         output["generations"].append(
@@ -586,6 +640,8 @@ def run_simulation(config: SimulationConfig) -> dict[str, Any]:
                 "best_shaping_penalty": best_shaping_penalty,
                 "best_reached_first_pipe_bonus": best_first_pipe_bonus,
                 "best_avg_shaping_penalty": best_avg_shaping_penalty,
+                "best_avg_abs_gap_error": best_avg_abs_gap_error,
+                "best_mean_proximity_weight": best_mean_proximity_weight,
                 "genomes": generation_results,
             }
         )
@@ -618,6 +674,8 @@ def write_stats(simulation_data: dict[str, Any], run_dir: Path, save_csv: bool) 
             "best_shaping_penalty": generation.get("best_shaping_penalty", 0.0),
             "best_reached_first_pipe_bonus": generation.get("best_reached_first_pipe_bonus", 0.0),
             "best_avg_shaping_penalty": generation.get("best_avg_shaping_penalty", 0.0),
+            "best_avg_abs_gap_error": generation.get("best_avg_abs_gap_error", 0.0),
+            "best_mean_proximity_weight": generation.get("best_mean_proximity_weight", 0.0),
         }
         for generation in simulation_data["generations"]
     ]
@@ -652,6 +710,8 @@ def write_stats(simulation_data: dict[str, Any], run_dir: Path, save_csv: bool) 
                     "best_shaping_penalty",
                     "best_reached_first_pipe_bonus",
                     "best_avg_shaping_penalty",
+                    "best_avg_abs_gap_error",
+                    "best_mean_proximity_weight",
                 ],
             )
             writer.writeheader()
