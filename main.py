@@ -21,6 +21,7 @@ from pipe import Pipe
 NETWORK_INPUT_SIZE = 6
 NETWORK_OUTPUT_SIZE = 1
 FITNESS_CENTERING_PENALTY_SCALE = 5.0
+SHAPING_SCALE = 0.1
 FIRST_PIPE_REACHED_BONUS = 200.0
 FLAP_COOLDOWN_FRAMES = 8
 FLAP_ON_THRESHOLD = 0.8
@@ -34,7 +35,7 @@ CEILING_TOUCH_PENALTY = 200.0
 class SimulationConfig:
     population_size: int = 40
     generations: int = 10
-    max_steps: int = 300
+    max_steps: int = 1000
     world_width: float = 500.0
     world_height: float = 800.0
     pipe_spacing: float = 220.0
@@ -45,6 +46,7 @@ class SimulationConfig:
     min_compatibility_threshold: float = 0.3
     flap_policy: str = "hysteresis"
     shaping_weight: float = 10.0
+    shaping_scale: float = SHAPING_SCALE
     flap_cooldown_frames: int = FLAP_COOLDOWN_FRAMES
     flap_on_threshold: float = FLAP_ON_THRESHOLD
     flap_off_threshold: float = FLAP_OFF_THRESHOLD
@@ -251,7 +253,7 @@ def simulate_genome(genome: Genome, config: SimulationConfig) -> dict[str, Any]:
     steps_survived = float(steps)
     pipes_reward = float(pipes_passed * 5000.0)
     reached_first_pipe_bonus = FIRST_PIPE_REACHED_BONUS if reached_first_pipe else 0.0
-    shaping_penalty = centering_penalty * config.shaping_weight
+    shaping_penalty = centering_penalty * config.shaping_weight * config.shaping_scale
     ceiling_penalty = ceiling_touches * config.ceiling_touch_penalty
     average_centering_penalty = (centering_penalty / steps_survived) if steps_survived > 0 else 0.0
     genome.fitness = steps_survived + pipes_reward + reached_first_pipe_bonus - shaping_penalty - ceiling_penalty
@@ -557,6 +559,7 @@ def run_simulation(config: SimulationConfig) -> dict[str, Any]:
             f"best={best_fitness:.2f} mean={mean_fitness:.2f} "
             f"median={median_fitness:.2f} species={species_count} "
             f"threshold={threshold_used:.2f}->{next_threshold:.2f} "
+            f"max_steps={config.max_steps} "
             f"best_steps={best_steps} best_pipes_passed={best_pipes_passed} "
             f"mean_pipes_passed={mean_pipes_passed:.2f} "
             f"best_steps_component={best_steps_component:.2f} "
@@ -791,6 +794,12 @@ def replay_from_genome(genome_path: Path, config: SimulationConfig) -> tuple[dic
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--seed", type=int, default=None, help="Seed for deterministic runs")
+    parser.add_argument(
+        "--max-steps",
+        type=int,
+        default=SimulationConfig.max_steps,
+        help="Maximum simulation steps per episode",
+    )
     parser.add_argument("--plot", action="store_true", help="Save a fitness-over-generations PNG")
     parser.add_argument("--csv", action="store_true", help="Also save fitness.csv")
     parser.add_argument(
@@ -835,6 +844,7 @@ def main() -> None:
     args = parse_args()
     config = SimulationConfig(
         seed=args.seed,
+        max_steps=max(1, args.max_steps),
         flap_policy=args.flap_policy,
         flap_cooldown_frames=max(0, args.flap_cooldown_frames),
         flap_on_threshold=args.flap_on_threshold,
