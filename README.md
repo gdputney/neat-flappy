@@ -1,6 +1,6 @@
 # neat-flappy
 
-Minimal Flappy Bird simulation with a lightweight NEAT-style evolution loop.
+Minimal Flappy Bird simulation with a NEAT evolution loop (node/connection genes, innovation numbers, structural mutations, feedforward topological evaluation, and speciation with fitness sharing).
 
 ## Requirements
 
