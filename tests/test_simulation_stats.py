@@ -21,6 +21,8 @@ from main import (
     parse_args,
     pipe_crossed_bird,
     run_debug_one_episode,
+    derive_seed,
+    evaluate_genome,
     run_simulation,
     simulate_genome,
     normalized_gap_center_distance,
@@ -70,6 +72,8 @@ class SimulationStatsTests(unittest.TestCase):
             self.assertIn("best_reached_first_pipe_bonus", generation)
             self.assertIn("best_avg_abs_gap_error", generation)
             self.assertIn("best_mean_proximity_weight", generation)
+            self.assertIn("best_episode_pipes_passed_max", generation)
+            self.assertIn("best_episode_pipes_passed_mean", generation)
 
             genomes = generation["genomes"]
             self.assertEqual(generation["best_steps"], max(genome["steps_alive"] for genome in genomes))
@@ -103,6 +107,40 @@ class SimulationStatsTests(unittest.TestCase):
                 best_genome_result.get("mean_proximity_weight", 0.0),
             )
 
+
+
+    def test_eval_episodes_mean_fitness_is_used(self) -> None:
+        config = SimulationConfig(max_steps=25, seed=8, eval_episodes=3)
+        tracker = InnovationTracker()
+        genome = create_initial_genome(input_size=NETWORK_INPUT_SIZE, output_size=1, tracker=tracker)
+
+        evaluated = evaluate_genome(genome, config, generation_index=0, genome_index=0)
+
+        self.assertEqual(evaluated["eval_episodes"], 3)
+        self.assertEqual(len(evaluated["episode_fitnesses"]), 3)
+        self.assertAlmostEqual(
+            evaluated["fitness"],
+            sum(evaluated["episode_fitnesses"]) / len(evaluated["episode_fitnesses"]),
+        )
+
+    def test_deterministic_pipe_schedule_repeats_for_same_generation(self) -> None:
+        config = SimulationConfig(max_steps=40, seed=9, deterministic_pipes=True, flap_policy="deterministic")
+        tracker = InnovationTracker()
+        genome = create_initial_genome(input_size=NETWORK_INPUT_SIZE, output_size=1, tracker=tracker)
+
+        pipe_seed = derive_seed(config.seed or 0, 2, 0)
+        action_seed = derive_seed(config.seed or 0, 2, 5, 0, 17)
+
+        first = simulate_genome(genome, config, pipe_rng_seed=pipe_seed, action_rng_seed=action_seed)
+        second = simulate_genome(genome, config, pipe_rng_seed=pipe_seed, action_rng_seed=action_seed)
+
+        first_pipes = [(frame["pipes"][0]["top"], frame["pipes"][0]["bottom"]) for frame in first["frames"] if frame["pipes"]]
+        second_pipes = [(frame["pipes"][0]["top"], frame["pipes"][0]["bottom"]) for frame in second["frames"] if frame["pipes"]]
+
+        self.assertEqual(first_pipes, second_pipes)
+        self.assertEqual(first["fitness"], second["fitness"])
+        self.assertEqual(first["pipes_passed"], second["pipes_passed"])
+
     def test_generation_log_includes_max_steps(self) -> None:
         config = SimulationConfig(population_size=3, generations=1, max_steps=17, seed=11)
 
@@ -118,6 +156,9 @@ class SimulationStatsTests(unittest.TestCase):
         self.assertEqual(SimulationConfig().shaping_scale, SHAPING_SCALE)
         self.assertAlmostEqual(SimulationConfig().shaping_scale, 0.1)
         self.assertEqual(SimulationConfig().alive_bonus_after_first_pipe, ALIVE_BONUS_AFTER_FIRST_PIPE)
+        self.assertEqual(SimulationConfig().population_size, 100)
+        self.assertEqual(SimulationConfig().target_species, 8)
+        self.assertAlmostEqual(SimulationConfig().compatibility_adjust_step, 0.02)
 
     def test_fitness_prioritizes_pipes_passed(self) -> None:
         config = SimulationConfig(max_steps=15, seed=3)
@@ -159,10 +200,13 @@ class SimulationStatsTests(unittest.TestCase):
 
 class CliParsingTests(unittest.TestCase):
     def test_parse_args_accepts_max_steps(self) -> None:
-        with patch("sys.argv", ["main.py", "--max-steps", "321"]):
+        with patch("sys.argv", ["main.py", "--max-steps", "321", "--eval-episodes", "3", "--deterministic-pipes", "--flap-policy", "deterministic"]):
             args = parse_args()
 
         self.assertEqual(args.max_steps, 321)
+        self.assertEqual(args.eval_episodes, 3)
+        self.assertTrue(args.deterministic_pipes)
+        self.assertEqual(args.flap_policy, "deterministic")
 
 
 class DebugOneEpisodeTests(unittest.TestCase):
@@ -331,19 +375,19 @@ class ElitismTests(unittest.TestCase):
 class CompatibilityThresholdTests(unittest.TestCase):
     def test_threshold_decreases_when_species_below_target(self) -> None:
         self.assertEqual(
-            adjust_compatibility_threshold(1.2, species_count=3, target_species=5, step=0.05, min_threshold=0.3),
-            1.15,
+            adjust_compatibility_threshold(1.2, species_count=3, target_species=8, step=0.02, min_threshold=0.3),
+            1.18,
         )
 
     def test_threshold_increases_when_species_above_target(self) -> None:
         self.assertEqual(
-            adjust_compatibility_threshold(1.2, species_count=7, target_species=5, step=0.05, min_threshold=0.3),
-            1.25,
+            adjust_compatibility_threshold(1.2, species_count=9, target_species=8, step=0.02, min_threshold=0.3),
+            1.22,
         )
 
     def test_threshold_respects_minimum_floor(self) -> None:
         self.assertEqual(
-            adjust_compatibility_threshold(0.32, species_count=1, target_species=5, step=0.05, min_threshold=0.3),
+            adjust_compatibility_threshold(0.31, species_count=1, target_species=8, step=0.02, min_threshold=0.3),
             0.3,
         )
 
