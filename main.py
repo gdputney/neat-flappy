@@ -21,6 +21,7 @@ from pipe import Pipe
 NETWORK_INPUT_SIZE = 6
 NETWORK_OUTPUT_SIZE = 1
 FITNESS_CENTERING_PENALTY_SCALE = 5.0
+FIRST_PIPE_REACHED_BONUS = 200.0
 
 
 @dataclass
@@ -37,6 +38,7 @@ class SimulationConfig:
     compatibility_adjust_step: float = 0.05
     min_compatibility_threshold: float = 0.3
     flap_policy: str = "probabilistic"
+    shaping_weight: float = 10.0
 
 
 def decide_flap(output: float, policy: str, is_flapping: bool = False) -> bool:
@@ -99,12 +101,15 @@ def pipe_crossed_bird(previous_x: float, current_x: float, pipe_width: float, bi
     return previous_right_edge >= bird_x and current_right_edge < bird_x
 
 def normalized_gap_center_distance(bird: Bird, pipes: list[Pipe], world_height: float) -> float:
-    """Return normalized absolute distance from bird y to nearest upcoming gap center."""
+    """Return normalized abs distance from bird y to the next pipe ahead gap center."""
     if not pipes:
         return 0.0
 
     ahead_pipes = [pipe for pipe in pipes if (pipe.x + pipe.width) >= bird.x]
-    next_pipe = min(ahead_pipes or pipes, key=lambda pipe: pipe.x)
+    if not ahead_pipes:
+        return 0.0
+
+    next_pipe = min(ahead_pipes, key=lambda pipe: pipe.x)
     gap_center = (next_pipe.top + next_pipe.bottom) / 2.0
     distance = abs(bird.y - gap_center)
     height = world_height if world_height > 0 else 1.0
@@ -113,7 +118,8 @@ def normalized_gap_center_distance(bird: Bird, pipes: list[Pipe], world_height: 
 
 def simulate_genome(genome: Genome, config: SimulationConfig) -> dict[str, Any]:
     bird = Bird(world_width=config.world_width, world_height=config.world_height)
-    pipes = [Pipe(x=config.world_width + 100.0, world_height=config.world_height)]
+    first_pipe = Pipe(x=config.world_width + 100.0, world_height=config.world_height)
+    pipes = [first_pipe]
     passed_ids: set[int] = set()
     frames: list[dict[str, Any]] = []
     alive = True
@@ -123,6 +129,7 @@ def simulate_genome(genome: Genome, config: SimulationConfig) -> dict[str, Any]:
     centering_penalty = 0.0
     average_centering_penalty = 0.0
     is_flapping = False
+    reached_first_pipe = False
 
     while alive and steps < config.max_steps:
         if pipes[-1].x < config.world_width - config.pipe_spacing:
@@ -162,6 +169,9 @@ def simulate_genome(genome: Genome, config: SimulationConfig) -> dict[str, Any]:
             config.world_height,
         )
 
+        if not reached_first_pipe and first_pipe.x <= bird.x:
+            reached_first_pipe = True
+
         frames.append(
             {
                 "step": steps,
@@ -183,14 +193,19 @@ def simulate_genome(genome: Genome, config: SimulationConfig) -> dict[str, Any]:
         steps += 1
 
     steps_survived = float(steps)
-    pipe_reward = float(pipes_passed * 5000.0)
-    alive_bonus = 25.0 if not crashed else 0.0
+    pipes_reward = float(pipes_passed * 5000.0)
+    reached_first_pipe_bonus = FIRST_PIPE_REACHED_BONUS if reached_first_pipe else 0.0
+    shaping_penalty = centering_penalty * config.shaping_weight
     average_centering_penalty = (centering_penalty / steps_survived) if steps_survived > 0 else 0.0
-    genome.fitness = pipe_reward + steps_survived + alive_bonus - centering_penalty
+    genome.fitness = steps_survived + pipes_reward + reached_first_pipe_bonus - shaping_penalty
     return {
         "fitness": genome.fitness,
         "steps_alive": steps,
         "pipes_passed": pipes_passed,
+        "steps": steps_survived,
+        "pipes_reward": pipes_reward,
+        "shaping_penalty": shaping_penalty,
+        "reached_first_pipe_bonus": reached_first_pipe_bonus,
         "frames": frames,
         "crashed": crashed,
         "centering_penalty": centering_penalty,
@@ -335,6 +350,10 @@ def run_simulation(config: SimulationConfig) -> dict[str, Any]:
         mean_pipes_passed = sum(pipes_passed) / len(pipes_passed)
         best_result = max(generation_results, key=lambda result: result["fitness"])
         best_avg_shaping_penalty = best_result.get("average_centering_penalty", 0.0)
+        best_steps_component = best_result.get("steps", 0.0)
+        best_pipes_reward = best_result.get("pipes_reward", 0.0)
+        best_shaping_penalty = best_result.get("shaping_penalty", 0.0)
+        best_first_pipe_bonus = best_result.get("reached_first_pipe_bonus", 0.0)
         species_count = len(speciate_population(population, config.compatibility_threshold))
         threshold_used = config.compatibility_threshold
         next_threshold = adjust_compatibility_threshold(
@@ -352,6 +371,10 @@ def run_simulation(config: SimulationConfig) -> dict[str, Any]:
             f"threshold={threshold_used:.2f}->{next_threshold:.2f} "
             f"best_steps={best_steps} best_pipes_passed={best_pipes_passed} "
             f"mean_pipes_passed={mean_pipes_passed:.2f} "
+            f"best_steps_component={best_steps_component:.2f} "
+            f"best_pipes_reward={best_pipes_reward:.2f} "
+            f"best_shaping_penalty={best_shaping_penalty:.2f} "
+            f"best_reached_first_pipe_bonus={best_first_pipe_bonus:.2f} "
             f"best_avg_shaping_penalty={best_avg_shaping_penalty:.3f}"
         )
 
@@ -367,6 +390,10 @@ def run_simulation(config: SimulationConfig) -> dict[str, Any]:
                 "best_steps": best_steps,
                 "best_pipes_passed": best_pipes_passed,
                 "mean_pipes_passed": mean_pipes_passed,
+                "best_steps_component": best_steps_component,
+                "best_pipes_reward": best_pipes_reward,
+                "best_shaping_penalty": best_shaping_penalty,
+                "best_reached_first_pipe_bonus": best_first_pipe_bonus,
                 "best_avg_shaping_penalty": best_avg_shaping_penalty,
                 "genomes": generation_results,
             }
@@ -395,6 +422,10 @@ def write_stats(simulation_data: dict[str, Any], run_dir: Path, save_csv: bool) 
             "best_steps": generation.get("best_steps", 0),
             "best_pipes_passed": generation.get("best_pipes_passed", 0),
             "mean_pipes_passed": generation.get("mean_pipes_passed", 0.0),
+            "best_steps_component": generation.get("best_steps_component", 0.0),
+            "best_pipes_reward": generation.get("best_pipes_reward", 0.0),
+            "best_shaping_penalty": generation.get("best_shaping_penalty", 0.0),
+            "best_reached_first_pipe_bonus": generation.get("best_reached_first_pipe_bonus", 0.0),
             "best_avg_shaping_penalty": generation.get("best_avg_shaping_penalty", 0.0),
         }
         for generation in simulation_data["generations"]
@@ -425,6 +456,10 @@ def write_stats(simulation_data: dict[str, Any], run_dir: Path, save_csv: bool) 
                     "best_steps",
                     "best_pipes_passed",
                     "mean_pipes_passed",
+                    "best_steps_component",
+                    "best_pipes_reward",
+                    "best_shaping_penalty",
+                    "best_reached_first_pipe_bonus",
                     "best_avg_shaping_penalty",
                 ],
             )

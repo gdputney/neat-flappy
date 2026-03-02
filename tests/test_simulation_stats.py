@@ -1,7 +1,11 @@
 import unittest
 from unittest.mock import patch
 
+from bird import Bird
+from pipe import Pipe
+
 from main import (
+    FIRST_PIPE_REACHED_BONUS,
     FITNESS_CENTERING_PENALTY_SCALE,
     InnovationTracker,
     NETWORK_INPUT_SIZE,
@@ -13,6 +17,7 @@ from main import (
     pipe_crossed_bird,
     run_simulation,
     simulate_genome,
+    normalized_gap_center_distance,
 )
 
 
@@ -28,7 +33,10 @@ class SimulationStatsTests(unittest.TestCase):
 
             bird_x = frame["bird"]["x"]
             ahead_pipes = [pipe for pipe in pipes if (pipe["x"] + pipe["width"]) >= bird_x]
-            next_pipe = min(ahead_pipes or pipes, key=lambda pipe: pipe["x"])
+            if not ahead_pipes:
+                continue
+
+            next_pipe = min(ahead_pipes, key=lambda pipe: pipe["x"])
             gap_center = (next_pipe["top"] + next_pipe["bottom"]) / 2.0
             distance = abs(frame["bird"]["y"] - gap_center)
             penalty += FITNESS_CENTERING_PENALTY_SCALE * min(distance / height, 1.0)
@@ -45,6 +53,10 @@ class SimulationStatsTests(unittest.TestCase):
             self.assertIn("best_pipes_passed", generation)
             self.assertIn("mean_pipes_passed", generation)
             self.assertIn("best_avg_shaping_penalty", generation)
+            self.assertIn("best_steps_component", generation)
+            self.assertIn("best_pipes_reward", generation)
+            self.assertIn("best_shaping_penalty", generation)
+            self.assertIn("best_reached_first_pipe_bonus", generation)
 
             genomes = generation["genomes"]
             self.assertEqual(generation["best_steps"], max(genome["steps_alive"] for genome in genomes))
@@ -62,6 +74,13 @@ class SimulationStatsTests(unittest.TestCase):
                 generation["best_avg_shaping_penalty"],
                 best_genome_result.get("average_centering_penalty", 0.0),
             )
+            self.assertAlmostEqual(generation["best_steps_component"], best_genome_result.get("steps", 0.0))
+            self.assertAlmostEqual(generation["best_pipes_reward"], best_genome_result.get("pipes_reward", 0.0))
+            self.assertAlmostEqual(generation["best_shaping_penalty"], best_genome_result.get("shaping_penalty", 0.0))
+            self.assertAlmostEqual(
+                generation["best_reached_first_pipe_bonus"],
+                best_genome_result.get("reached_first_pipe_bonus", 0.0),
+            )
 
     def test_fitness_prioritizes_pipes_passed(self) -> None:
         config = SimulationConfig(max_steps=15, seed=3)
@@ -71,12 +90,28 @@ class SimulationStatsTests(unittest.TestCase):
         result = simulate_genome(genome, config)
 
         expected = (
-            (result["pipes_passed"] * 5000.0)
-            + result["steps_alive"]
-            + (0.0 if result["crashed"] else 25.0)
-            - self._expected_centering_penalty(result, config.world_height)
+            result["steps_alive"]
+            + (result["pipes_passed"] * 5000.0)
+            + (FIRST_PIPE_REACHED_BONUS if result["reached_first_pipe_bonus"] > 0 else 0.0)
+            - (self._expected_centering_penalty(result, config.world_height) * config.shaping_weight)
         )
         self.assertAlmostEqual(result["fitness"], expected)
+        self.assertEqual(result["pipes_reward"], result["pipes_passed"] * 5000.0)
+
+
+class ShapingSignalTests(unittest.TestCase):
+    def test_dy_to_gap_is_zero_when_no_pipe_ahead(self) -> None:
+        bird = Bird(world_width=500.0, world_height=800.0)
+        bird.x = 200.0
+        bird.y = 400.0
+
+        behind_pipe = Pipe(x=10.0, world_height=800.0)
+        behind_pipe.width = 50.0
+
+        self.assertEqual(
+            normalized_gap_center_distance(bird=bird, pipes=[behind_pipe], world_height=800.0),
+            0.0,
+        )
 
 
 class FlapPolicyTests(unittest.TestCase):
