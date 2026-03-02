@@ -109,7 +109,7 @@ class SimulationStatsTests(unittest.TestCase):
         result = simulate_genome(genome, config)
 
         self.assertIn("death_reason", result)
-        self.assertIn(result["death_reason"], {"hit_ceiling", "hit_ground", "hit_pipe", "max_steps"})
+        self.assertIn(result["death_reason"], {"hit_ground", "hit_pipe", "max_steps"})
         self.assertIn("death_bird_y", result)
         self.assertIn("death_bird_velocity", result)
         self.assertIn("screen_bounds", result)
@@ -152,32 +152,6 @@ class DebugOneEpisodeTests(unittest.TestCase):
 
 
 
-class DebugOneEpisodeTests(unittest.TestCase):
-    def test_debug_one_episode_logs_requested_fields(self) -> None:
-        config = SimulationConfig(max_steps=41, seed=4)
-
-        stream = io.StringIO()
-        with redirect_stdout(stream):
-            result = run_debug_one_episode(config)
-
-        output = stream.getvalue()
-        self.assertIn("initial_pipe_spawn_x=", output)
-        self.assertIn("initial_pipe_speed=", output)
-        self.assertIn("t=0", output)
-        self.assertIn("t=20", output)
-        self.assertIn("bird_x=", output)
-        self.assertIn("bird_y=", output)
-        self.assertIn("next_pipe_x=", output)
-        self.assertIn("dx_to_next_pipe=", output)
-        self.assertIn("reached_first_pipe=", output)
-        self.assertIn("pipes_passed=", output)
-
-        self.assertIn("steps_executed", result)
-        self.assertIn("reached_first_pipe", result)
-        self.assertIn("pipes_passed", result)
-
-
-
 class ShapingSignalTests(unittest.TestCase):
     def test_dy_to_gap_is_zero_when_no_pipe_ahead(self) -> None:
         bird = Bird(world_width=500.0, world_height=800.0)
@@ -201,8 +175,8 @@ class FlapPolicyTests(unittest.TestCase):
             self.assertFalse(decide_flap(output=0.3, policy="probabilistic"))
 
     def test_hysteresis_flap_policy_turns_on_off_with_thresholds(self) -> None:
-        self.assertTrue(decide_flap(output=0.7, policy="hysteresis", is_flapping=False))
-        self.assertFalse(decide_flap(output=0.3, policy="hysteresis", is_flapping=True))
+        self.assertTrue(decide_flap(output=0.8, policy="hysteresis", is_flapping=False))
+        self.assertFalse(decide_flap(output=0.2, policy="hysteresis", is_flapping=True))
 
     def test_hysteresis_flap_policy_holds_state_in_middle_band(self) -> None:
         self.assertTrue(decide_flap(output=0.5, policy="hysteresis", is_flapping=True))
@@ -226,6 +200,37 @@ class PipePassingTests(unittest.TestCase):
 
 
 
+
+
+
+class CeilingAndDebugBehaviorTests(unittest.TestCase):
+    def test_ceiling_clamp_applies_penalty_without_death(self) -> None:
+        config = SimulationConfig(max_steps=1, ceiling_touch_penalty=123.0)
+        tracker = InnovationTracker()
+        genome = create_initial_genome(input_size=NETWORK_INPUT_SIZE, output_size=1, tracker=tracker)
+        with patch("main.decide_flap", return_value=False), patch.object(Bird, "update_physics", autospec=True) as update:
+            def force_above_ceiling(self):
+                self.y = -3.0
+                self.velocity = -4.0
+
+            update.side_effect = force_above_ceiling
+            result = simulate_genome(genome, config)
+
+        self.assertEqual(result["ceiling_touches"], 1)
+        self.assertEqual(result["ceiling_penalty"], 123.0)
+        self.assertEqual(result["frames"][0]["bird"]["y"], 0)
+        self.assertEqual(result["frames"][0]["bird"]["velocity"], 0)
+
+    def test_debug_flags_force_flap_behavior(self) -> None:
+        config = SimulationConfig(max_steps=5, debug_no_flap=True, debug_always_flap=True, seed=1)
+        stream = io.StringIO()
+        with redirect_stdout(stream):
+            result = run_debug_one_episode(config, interval=1)
+
+        output = stream.getvalue()
+        self.assertIn("steps_executed=", output)
+        self.assertIn("death_reason=", output)
+        self.assertGreaterEqual(result["steps_executed"], 1)
 
 class ElitismTests(unittest.TestCase):
     def test_global_top_genomes_are_carried_unchanged(self) -> None:

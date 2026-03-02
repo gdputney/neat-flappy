@@ -13,7 +13,7 @@ class BirdInputTests(unittest.TestCase):
 
         self.assertEqual(len(inputs), 6)
         self.assertAlmostEqual(inputs[0], (2.0 * (260.0 / 800.0)) - 1.0)
-        self.assertAlmostEqual(inputs[1], -4.0 / 8.0)
+        self.assertAlmostEqual(inputs[1], -4.0 / abs(bird.velocity_min))
         self.assertAlmostEqual(inputs[2], (220.0 - 100.0) / 500.0)
         self.assertAlmostEqual(inputs[3], (280.0 - 260.0) / 800.0)
         self.assertAlmostEqual(inputs[4], (200.0 - 260.0) / 800.0)
