@@ -153,16 +153,16 @@ def simulate_genome(genome: Genome, config: SimulationConfig) -> dict[str, Any]:
 
         pipes = [pipe for pipe in pipes if (pipe.x + pipe.width) > -5]
 
-        if bird.y < 0:
+        if bird.y <= 0:
             alive = False
             crashed = True
-            death_reason = "hit_ceiling"
+            death_reason = "ceiling"
             death_bird_y = bird.y
             death_bird_velocity = bird.velocity
-        elif bird.y > config.world_height:
+        elif bird.y >= config.world_height:
             alive = False
             crashed = True
-            death_reason = "hit_ground"
+            death_reason = "ground"
             death_bird_y = bird.y
             death_bird_velocity = bird.velocity
 
@@ -171,7 +171,7 @@ def simulate_genome(genome: Genome, config: SimulationConfig) -> dict[str, Any]:
                 alive = False
                 crashed = True
                 if death_reason is None:
-                    death_reason = "hit_pipe"
+                    death_reason = "pipe"
                     death_bird_y = bird.y
                     death_bird_velocity = bird.velocity
             previous_x = previous_pipe_x.get(id(pipe), pipe.x)
@@ -208,8 +208,8 @@ def simulate_genome(genome: Genome, config: SimulationConfig) -> dict[str, Any]:
         )
         steps += 1
 
-    if death_reason is None and not crashed and steps >= config.max_steps:
-        death_reason = "max_steps"
+    if death_reason is None:
+        death_reason = "unknown"
         death_bird_y = bird.y
         death_bird_velocity = bird.velocity
 
@@ -362,6 +362,9 @@ def run_debug_one_episode(config: SimulationConfig, interval: int = 20) -> dict[
     pipes = [first_pipe]
     passed_ids: set[int] = set()
     reached_first_pipe = False
+    death_reason: str | None = None
+    death_bird_y: float | None = None
+    death_bird_velocity: float | None = None
     pipes_passed = 0
     is_flapping = False
 
@@ -403,13 +406,24 @@ def run_debug_one_episode(config: SimulationConfig, interval: int = 20) -> dict[
 
         pipes = [pipe for pipe in pipes if (pipe.x + pipe.width) > -5]
 
-        if bird.y < 0 or bird.y > config.world_height:
+        if bird.y <= 0:
+            death_reason = "ceiling"
+            death_bird_y = bird.y
+            death_bird_velocity = bird.velocity
+            break
+        if bird.y >= config.world_height:
+            death_reason = "ground"
+            death_bird_y = bird.y
+            death_bird_velocity = bird.velocity
             break
 
         crashed_into_pipe = False
         for pipe in pipes:
             if bird_hits_pipe(bird, pipe):
                 crashed_into_pipe = True
+                death_reason = "pipe"
+                death_bird_y = bird.y
+                death_bird_velocity = bird.velocity
             previous_x = previous_pipe_x.get(id(pipe), pipe.x)
             if pipe_crossed_bird(previous_x, pipe.x, pipe.width, bird.x) and id(pipe) not in passed_ids:
                 passed_ids.add(id(pipe))
@@ -421,17 +435,30 @@ def run_debug_one_episode(config: SimulationConfig, interval: int = 20) -> dict[
         if crashed_into_pipe:
             break
 
+    if death_reason is None:
+        death_reason = "unknown"
+        death_bird_y = bird.y
+        death_bird_velocity = bird.velocity
+
     print(
         "[debug-one] final "
         f"steps_executed={steps_executed} "
         f"reached_first_pipe={reached_first_pipe} "
-        f"pipes_passed={pipes_passed}"
+        f"pipes_passed={pipes_passed} "
+        f"death_reason={death_reason} "
+        f"death_bird_y={death_bird_y:.2f} "
+        f"death_bird_vel={death_bird_velocity:.2f} "
+        f"screen_height={config.world_height:.2f}"
     )
 
     return {
         "steps_executed": steps_executed,
         "reached_first_pipe": reached_first_pipe,
         "pipes_passed": pipes_passed,
+        "death_reason": death_reason,
+        "death_bird_y": death_bird_y,
+        "death_bird_velocity": death_bird_velocity,
+        "screen_height": config.world_height,
     }
 
 
