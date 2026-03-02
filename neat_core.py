@@ -39,8 +39,6 @@ class Genome:
         if len(inputs) != len(input_nodes):
             raise ValueError(f"Expected {len(input_nodes)} inputs, received {len(inputs)}")
 
-        self._ensure_acyclic_enabled_connections()
-
         node_lookup = {int(node["id"]): node for node in self.node_genes}
         enabled_edges = [gene for gene in self.connection_genes if gene.get("enabled", True)]
 
@@ -52,16 +50,19 @@ class Genome:
             indegree[out_node] = indegree.get(out_node, 0) + 1
             outgoing.setdefault(in_node, []).append(edge)
 
-        queue = deque([node_id for node_id, degree in indegree.items() if degree == 0])
+        queue = [node_id for node_id, degree in indegree.items() if degree == 0]
         topo_order: list[int] = []
         while queue:
-            current = queue.popleft()
+            current = queue.pop(0)
             topo_order.append(current)
             for edge in outgoing.get(current, []):
                 out_node = int(edge["out_node"])
                 indegree[out_node] -= 1
                 if indegree[out_node] == 0:
                     queue.append(out_node)
+
+        if len(topo_order) != len(indegree):
+            raise ValueError("Genome has recurrent/cyclic enabled connections; feedforward eval failed")
 
         values = {int(node["id"]): 0.0 for node in self.node_genes}
         for input_value, node in zip(inputs, input_nodes):
@@ -95,8 +96,6 @@ class Genome:
         if random.random() < 0.1:
             self._add_node_mutation(tracker)
 
-        self._ensure_acyclic_enabled_connections()
-
     def _perturb_connection_weights(self, sigma: float = 0.3, reset_chance: float = 0.1) -> None:
         for connection in self.connection_genes:
             if random.random() < reset_chance:
@@ -108,16 +107,7 @@ class Genome:
         if not self.connection_genes:
             return
         gene = random.choice(self.connection_genes)
-        currently_enabled = bool(gene.get("enabled", True))
-        if currently_enabled:
-            gene["enabled"] = False
-            return
-
-        in_node = int(gene["in_node"])
-        out_node = int(gene["out_node"])
-        if self._has_enabled_path(out_node, in_node):
-            return
-        gene["enabled"] = True
+        gene["enabled"] = not bool(gene.get("enabled", True))
 
     def _add_node_mutation(self, tracker: InnovationTracker | None = None) -> None:
         enabled_connections = [gene for gene in self.connection_genes if gene.get("enabled", True)]
@@ -153,47 +143,40 @@ class Genome:
             }
         )
 
-    def _add_connection_mutation(
-        self,
-        tracker: InnovationTracker | None = None,
-        max_attempts: int = 30,
-    ) -> None:
+    def _add_connection_mutation(self, tracker: InnovationTracker | None = None) -> None:
         node_ids = [int(node["id"]) for node in self.node_genes]
         if len(node_ids) < 2:
             return
 
-        depth = self._node_depths()
+        existing_pairs = {(int(g["in_node"]), int(g["out_node"])) for g in self.connection_genes}
+        topo_rank = self._topological_rank()
 
-        for _ in range(max_attempts):
-            in_node = random.choice(node_ids)
-            out_node = random.choice(node_ids)
-            if in_node == out_node:
-                continue
-            if self._node_type(out_node) == "input":
-                continue
-            if depth.get(in_node, 0) >= depth.get(out_node, 0):
-                continue
+        candidates: list[tuple[int, int]] = []
+        for a in node_ids:
+            for b in node_ids:
+                if a == b:
+                    continue
+                if (a, b) in existing_pairs:
+                    continue
+                if topo_rank.get(a, 0) >= topo_rank.get(b, 0):
+                    continue
+                if self._node_type(b) == "input":
+                    continue
+                candidates.append((a, b))
 
-            existing_gene = self._find_connection_gene(in_node, out_node)
-            if existing_gene is not None:
-                if not existing_gene.get("enabled", True) and not self._has_enabled_path(out_node, in_node):
-                    existing_gene["enabled"] = True
-                    existing_gene["weight"] = random.uniform(-1.0, 1.0)
-                continue
-
-            if self._has_enabled_path(out_node, in_node):
-                continue
-
-            self.connection_genes.append(
-                {
-                    "in_node": in_node,
-                    "out_node": out_node,
-                    "weight": random.uniform(-1.0, 1.0),
-                    "enabled": True,
-                    "innovation": self._innovation_for(tracker, in_node, out_node),
-                }
-            )
+        if not candidates:
             return
+
+        in_node, out_node = random.choice(candidates)
+        self.connection_genes.append(
+            {
+                "in_node": in_node,
+                "out_node": out_node,
+                "weight": random.uniform(-1.0, 1.0),
+                "enabled": True,
+                "innovation": self._innovation_for(tracker, in_node, out_node),
+            }
+        )
 
     def crossover(self, other: "Genome") -> "Genome":
         if not isinstance(other, Genome):
@@ -229,9 +212,7 @@ class Genome:
         }
         child_nodes = [node_lookup[node_id].copy() for node_id in sorted(node_ids)]
 
-        child = Genome(node_genes=child_nodes, connection_genes=child_connections, fitness=0.0)
-        child._ensure_acyclic_enabled_connections()
-        return child
+        return Genome(node_genes=child_nodes, connection_genes=child_connections, fitness=0.0)
 
     def compatibility_distance(self, other: "Genome", c1: float = 1.0, c2: float = 1.0, c3: float = 0.4) -> float:
         """NEAT compatibility distance based on excess/disjoint genes and weight difference."""
@@ -258,115 +239,6 @@ class Genome:
 
         n = max(len(self_map), len(other_map), 1)
         return (c1 * excess / n) + (c2 * disjoint / n) + (c3 * avg_weight_diff)
-
-    def _find_connection_gene(self, in_node: int, out_node: int) -> dict[str, Any] | None:
-        for gene in self.connection_genes:
-            if int(gene["in_node"]) == in_node and int(gene["out_node"]) == out_node:
-                return gene
-        return None
-
-    def _has_enabled_path(self, start_node: int, target_node: int) -> bool:
-        if start_node == target_node:
-            return True
-
-        adjacency: dict[int, list[int]] = {}
-        for gene in self.connection_genes:
-            if not gene.get("enabled", True):
-                continue
-            src = int(gene["in_node"])
-            dst = int(gene["out_node"])
-            adjacency.setdefault(src, []).append(dst)
-
-        visited: set[int] = set()
-        queue = deque([start_node])
-        while queue:
-            current = queue.popleft()
-            if current == target_node:
-                return True
-            if current in visited:
-                continue
-            visited.add(current)
-            for nxt in adjacency.get(current, []):
-                if nxt not in visited:
-                    queue.append(nxt)
-        return False
-
-    def _node_depths(self) -> dict[int, int]:
-        """Compute depth/layer from current enabled feedforward graph; fallback to type-based ordering."""
-        node_ids = [int(node["id"]) for node in self.node_genes]
-        indegree = {node_id: 0 for node_id in node_ids}
-        outgoing: dict[int, list[int]] = {node_id: [] for node_id in node_ids}
-
-        for gene in self.connection_genes:
-            if not gene.get("enabled", True):
-                continue
-            src = int(gene["in_node"])
-            dst = int(gene["out_node"])
-            if self._node_type(dst) == "input":
-                continue
-            outgoing.setdefault(src, []).append(dst)
-            indegree[dst] = indegree.get(dst, 0) + 1
-
-        queue = deque([node_id for node_id, deg in indegree.items() if deg == 0])
-        depth = {node_id: 0 for node_id in queue}
-        seen = 0
-
-        while queue:
-            current = queue.popleft()
-            seen += 1
-            current_depth = depth.get(current, 0)
-            for nxt in outgoing.get(current, []):
-                depth[nxt] = max(depth.get(nxt, 0), current_depth + 1)
-                indegree[nxt] -= 1
-                if indegree[nxt] == 0:
-                    queue.append(nxt)
-
-        if seen != len(node_ids):
-            return self._topological_rank()
-
-        for node_id in node_ids:
-            depth.setdefault(node_id, self._topological_rank().get(node_id, 0))
-        return depth
-
-    def _ensure_acyclic_enabled_connections(self) -> None:
-        """Disable edges that participate in cycles until enabled subgraph is acyclic."""
-        max_iters = max(1, len(self.connection_genes))
-        for _ in range(max_iters):
-            node_ids = [int(node["id"]) for node in self.node_genes]
-            indegree = {node_id: 0 for node_id in node_ids}
-            outgoing: dict[int, list[dict[str, Any]]] = {node_id: [] for node_id in node_ids}
-            enabled = [gene for gene in self.connection_genes if gene.get("enabled", True)]
-
-            for gene in enabled:
-                src = int(gene["in_node"])
-                dst = int(gene["out_node"])
-                outgoing.setdefault(src, []).append(gene)
-                indegree[dst] = indegree.get(dst, 0) + 1
-
-            queue = deque([node_id for node_id, deg in indegree.items() if deg == 0])
-            seen = 0
-            while queue:
-                current = queue.popleft()
-                seen += 1
-                for edge in outgoing.get(current, []):
-                    dst = int(edge["out_node"])
-                    indegree[dst] -= 1
-                    if indegree[dst] == 0:
-                        queue.append(dst)
-
-            if seen == len(node_ids):
-                return
-
-            cycle_edges = [
-                gene
-                for gene in enabled
-                if indegree.get(int(gene["in_node"]), 0) > 0 and indegree.get(int(gene["out_node"]), 0) > 0
-            ]
-            if not cycle_edges:
-                return
-
-            edge_to_disable = max(cycle_edges, key=lambda gene: int(gene.get("innovation", -1)))
-            edge_to_disable["enabled"] = False
 
     def _innovation_for(self, tracker: InnovationTracker | None, in_node: int, out_node: int) -> int:
         if tracker is not None:
