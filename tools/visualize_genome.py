@@ -59,17 +59,19 @@ def node_label(node: dict[str, Any], index: int) -> str:
     return f"hidden_{node_id}"
 
 
-def dot_from_genome(genome: dict[str, Any]) -> str:
+def dot_from_genome(genome: dict[str, Any]) -> tuple[str, int, int]:
     nodes = genome.get("node_genes", [])
     connections = genome.get("connection_genes", [])
 
-    lines = [
+    header_lines = [
         "digraph Genome {",
         "  rankdir=LR;",
         '  graph [bgcolor="white"];',
         '  node [shape=circle, style=filled, fontname="Helvetica"];',
         '  edge [fontname="Helvetica"];',
     ]
+    node_lines: list[str] = []
+    edge_lines: list[str] = []
 
     for index, node in enumerate(nodes):
         label = node_label(node, index)
@@ -79,7 +81,7 @@ def dot_from_genome(genome: dict[str, Any]) -> str:
             color = INPUT_COLOR
         elif node_type == "output":
             color = OUTPUT_COLOR
-        lines.append(f'  n{node.get("id", index)} [label="{label}", fillcolor="{color}"];')
+        node_lines.append(f'  n{node.get("id", index)} [label="{label}", fillcolor="{color}"];')
 
     for connection in connections:
         source = connection["in_node"]
@@ -91,12 +93,12 @@ def dot_from_genome(genome: dict[str, Any]) -> str:
         if not enabled:
             color = DISABLED_EDGE_COLOR
         penwidth = max(0.5, min(6.0, abs(weight) * 2.0))
-        lines.append(
+        edge_lines.append(
             f'  n{source} -> n{target} [label="{weight:+.2f}", color="{color}", style="{style}", penwidth={penwidth:.2f}];'
         )
 
-    lines.append("}")
-    return "\n".join(lines) + "\n"
+    dot_lines = [*header_lines, *node_lines, *edge_lines, "}"]
+    return "\n".join(dot_lines) + "\n", len(node_lines), len(edge_lines)
 
 
 def render_png_with_graphviz(dot_path: Path, png_path: Path) -> bool:
@@ -188,9 +190,12 @@ def main() -> None:
     args = parse_args()
     genome = load_genome_payload(args.genome)
 
-    dot_text = dot_from_genome(genome)
+    dot_text, node_line_count, edge_line_count = dot_from_genome(genome)
     args.dot_out.parent.mkdir(parents=True, exist_ok=True)
     args.dot_out.write_text(dot_text, encoding="utf-8")
+    print(f"DOT node lines emitted: {node_line_count}")
+    print(f"DOT edge lines emitted: {edge_line_count}")
+    print(f"DOT char length: {len(dot_text)}")
 
     png_written = False
     try:
