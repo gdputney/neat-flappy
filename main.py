@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import random
+from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -206,7 +207,8 @@ def run_simulation(config: SimulationConfig) -> dict[str, Any]:
 def main() -> None:
     config = SimulationConfig()
     simulation_data = run_simulation(config)
-    with open("simulation.json", "w", encoding="utf-8") as file:
+    output_path = Path(__file__).resolve().parent / "simulation.json"
+    with output_path.open("w", encoding="utf-8") as file:
         json.dump(simulation_data, file, indent=2)
 
 

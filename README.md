@@ -1,85 +1,44 @@
-# Neat Flappy
+# neat-flappy
 
-A minimal Flappy Bird + NEAT-style simulation scaffold.
-
-This repository includes:
-
-- `bird.py` — Bird physics and neural-network inputs.
-- `pipe.py` — Pipe obstacle generation and movement.
-- `neat_core.py` — `Genome` representation with feedforward activation, mutation, and crossover utilities.
-- `main.py` — End-to-end simulation runner, population evolution loop, and JSON export.
+Minimal Flappy Bird simulation with a lightweight NEAT-style evolution loop.
 
 ## Requirements
 
-- Python 3.10+ (3.11+ recommended)
-- No third-party dependencies required
+- Python 3.10+
 
-## Quick Start
+## Fresh machine setup
 
-Run the simulation:
+From the repository root:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+## Run
+
+From the repository root:
 
 ```bash
 python main.py
 ```
 
-This will execute several generations and write `simulation.json` in the repo root.
+This writes `simulation.json` to the repository root.
 
-## What `simulation.json` Contains
+## Quick validation
 
-Top-level structure:
+```bash
+python - <<'PY'
+import json
+from pathlib import Path
 
-- `config` — simulation configuration values.
-- `generations` — per-generation summary and per-genome simulation results.
-- `position_history` — compact timestep position snapshots for each genome run.
-
-Per-genome data includes:
-
-- `fitness` — final score for that simulation.
-- `steps_alive` — number of timesteps survived.
-- `pipes_passed` — count of successfully passed pipes.
-- `crashed` — whether the bird crashed.
-- `frames` — detailed frame-by-frame state (`bird`, `pipes`, `alive`, `flap`, etc.).
-
-## Fitness Behavior
-
-In `main.py`, fitness is calculated to:
-
-- Reward survival time.
-- Reward passing pipes.
-- Penalize crashes.
-
-This encourages agents to stay alive longer while making forward progress.
-
-## Module Notes
-
-### `bird.py`
-
-- `Bird.jump()` applies an upward impulse.
-- `Bird.update_physics()` applies gravity and moves the bird.
-- `Bird.get_inputs(pipes)` returns normalized inputs for the controller.
-
-### `pipe.py`
-
-- `Pipe` randomizes a vertical gap at initialization.
-- `Pipe.update()` moves the pipe left each tick.
-
-### `neat_core.py`
-
-- `Genome.activate(inputs)` performs feedforward sigmoid inference.
-- `Genome.mutate()` includes:
-  - connection weight perturbation,
-  - add-node mutation,
-  - add-connection mutation.
-- `Genome.crossover(other)` combines parent genes into a child genome.
-
-## Customizing the Simulation
-
-Update `SimulationConfig` in `main.py` to change:
-
-- population size,
-- generation count,
-- max steps,
-- world dimensions,
-- pipe spacing.
-
-You can also extend `SimpleGenome` or replace it with your own genome/controller implementation.
+path = Path("simulation.json")
+print("exists:", path.exists())
+if path.exists():
+    data = json.loads(path.read_text())
+    print("top-level keys:", list(data.keys()))
+    print("generations:", len(data.get("generations", [])))
+PY
+```
