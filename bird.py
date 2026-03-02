@@ -34,7 +34,8 @@ class Bird:
     x: float = 100.0
     gravity: float = 0.5
     jump_strength: float = -8.0
-    max_fall_speed: float = 10.0
+    velocity_min: float = -12.0
+    velocity_max: float = 12.0
     flap_cooldown_frames: int = 8
     world_width: float = 500.0
     world_height: float = 800.0
@@ -55,7 +56,7 @@ class Bird:
             self._flap_cooldown -= 1
 
         self._last_y = self.y
-        self.velocity = min(self.velocity + self.gravity, self.max_fall_speed)
+        self.velocity = self._clamp(self.velocity + self.gravity, self.velocity_min, self.velocity_max)
         self.y += self.velocity
 
     def update_physics(self) -> None:
@@ -105,8 +106,8 @@ class Bird:
         return self._clamp((2.0 * (value / self.world_height)) - 1.0, -1.0, 1.0)
 
     def _normalize_velocity(self, value: float) -> float:
-        max_upward = abs(self.jump_strength) if self.jump_strength else 1.0
-        max_downward = self.max_fall_speed if self.max_fall_speed else 1.0
+        max_upward = abs(self.velocity_min) if self.velocity_min else 1.0
+        max_downward = self.velocity_max if self.velocity_max else 1.0
         if value >= 0:
             return self._clamp(value / max_downward, -1.0, 1.0)
         return self._clamp(value / max_upward, -1.0, 1.0)
