@@ -1,4 +1,6 @@
+import io
 import unittest
+from contextlib import redirect_stdout
 from unittest.mock import patch
 
 from bird import Bird
@@ -15,6 +17,7 @@ from main import (
     decide_flap,
     evolve_population,
     pipe_crossed_bird,
+    run_debug_one_episode,
     run_simulation,
     simulate_genome,
     normalized_gap_center_distance,
@@ -97,6 +100,32 @@ class SimulationStatsTests(unittest.TestCase):
         )
         self.assertAlmostEqual(result["fitness"], expected)
         self.assertEqual(result["pipes_reward"], result["pipes_passed"] * 5000.0)
+
+
+class DebugOneEpisodeTests(unittest.TestCase):
+    def test_debug_one_episode_logs_requested_fields(self) -> None:
+        config = SimulationConfig(max_steps=41, seed=4)
+
+        stream = io.StringIO()
+        with redirect_stdout(stream):
+            result = run_debug_one_episode(config)
+
+        output = stream.getvalue()
+        self.assertIn("initial_pipe_spawn_x=", output)
+        self.assertIn("initial_pipe_speed=", output)
+        self.assertIn("t=0", output)
+        self.assertIn("t=20", output)
+        self.assertIn("bird_x=", output)
+        self.assertIn("bird_y=", output)
+        self.assertIn("next_pipe_x=", output)
+        self.assertIn("dx_to_next_pipe=", output)
+        self.assertIn("reached_first_pipe=", output)
+        self.assertIn("pipes_passed=", output)
+
+        self.assertIn("steps_executed", result)
+        self.assertIn("reached_first_pipe", result)
+        self.assertIn("pipes_passed", result)
+
 
 
 class ShapingSignalTests(unittest.TestCase):
