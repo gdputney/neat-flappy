@@ -28,6 +28,9 @@ class SimulationConfig:
     pipe_spacing: float = 220.0
     seed: int | None = None
     compatibility_threshold: float = 1.2
+    target_species: int = 5
+    compatibility_adjust_step: float = 0.05
+    min_compatibility_threshold: float = 0.3
 
 
 def create_initial_genome(input_size: int, output_size: int, tracker: InnovationTracker) -> Genome:
@@ -123,10 +126,10 @@ def simulate_genome(genome: Genome, config: SimulationConfig) -> dict[str, Any]:
         )
         steps += 1
 
-    survival_reward = float(steps)
-    pipe_reward = float(pipes_passed * 150.0)
-    crash_penalty = 50.0 if crashed else 0.0
-    genome.fitness = max(0.0, survival_reward + pipe_reward - crash_penalty)
+    steps_survived = float(steps)
+    pipe_reward = float(pipes_passed * 5000.0)
+    alive_bonus = 25.0 if not crashed else 0.0
+    genome.fitness = pipe_reward + steps_survived + alive_bonus
     return {
         "fitness": genome.fitness,
         "steps_alive": steps,
@@ -151,8 +154,25 @@ def speciate_population(population: list[Genome], threshold: float) -> list[list
     return species
 
 
+def adjust_compatibility_threshold(
+    threshold: float,
+    species_count: int,
+    target_species: int,
+    step: float,
+    min_threshold: float,
+) -> float:
+    if species_count < target_species:
+        return max(min_threshold, threshold - step)
+    if species_count > target_species:
+        return threshold + step
+    return threshold
+
+
 def evolve_population(population: list[Genome], tracker: InnovationTracker, config: SimulationConfig) -> list[Genome]:
     species = speciate_population(population, config.compatibility_threshold)
+
+    elite_count = min(max(1, len(population) // 8), 5, len(population))
+    global_elites = sorted(population, key=lambda genome: genome.fitness, reverse=True)[:elite_count]
 
     adjusted_fitness: dict[int, float] = {}
     for group in species:
@@ -161,25 +181,30 @@ def evolve_population(population: list[Genome], tracker: InnovationTracker, conf
             adjusted_fitness[id(genome)] = genome.fitness / group_size
 
     total_adjusted = sum(adjusted_fitness.values()) or 1.0
-    next_population: list[Genome] = []
+    next_population: list[Genome] = [copy.deepcopy(genome) for genome in global_elites]
+
+    target_non_elite_count = max(0, len(population) - len(next_population))
+    generated_non_elites = 0
 
     for group in species:
-        group_sorted = sorted(group, key=lambda genome: genome.fitness, reverse=True)
-        champion = copy.deepcopy(group_sorted[0])
-        champion.fitness = 0.0
-        next_population.append(champion)
+        if generated_non_elites >= target_non_elite_count:
+            break
 
+        group_sorted = sorted(group, key=lambda genome: genome.fitness, reverse=True)
         group_adjusted = sum(adjusted_fitness[id(genome)] for genome in group)
-        offspring_quota = int(round((group_adjusted / total_adjusted) * len(population)))
+        offspring_quota = int(round((group_adjusted / total_adjusted) * target_non_elite_count))
         offspring_quota = max(1, offspring_quota)
 
         selection_pool = group_sorted[: max(2, len(group_sorted) // 2)]
-        for _ in range(max(0, offspring_quota - 1)):
+        for _ in range(offspring_quota):
+            if generated_non_elites >= target_non_elite_count:
+                break
             parent_a = random.choice(selection_pool)
             parent_b = random.choice(selection_pool)
             child = parent_a.crossover(parent_b)
             child.mutate(tracker)
             next_population.append(child)
+            generated_non_elites += 1
 
     while len(next_population) < len(population):
         parent = random.choice(population)
@@ -241,15 +266,31 @@ def run_simulation(config: SimulationConfig) -> dict[str, Any]:
                 best_genome_index = genome_index
 
         fitnesses = [result["fitness"] for result in generation_results]
+        steps_alive = [result["steps_alive"] for result in generation_results]
+        pipes_passed = [result["pipes_passed"] for result in generation_results]
         best_fitness = max(fitnesses)
         mean_fitness = sum(fitnesses) / len(fitnesses)
         median_fitness = median(fitnesses)
+        best_steps = max(steps_alive)
+        best_pipes_passed = max(pipes_passed)
+        mean_pipes_passed = sum(pipes_passed) / len(pipes_passed)
         species_count = len(speciate_population(population, config.compatibility_threshold))
+        threshold_used = config.compatibility_threshold
+        next_threshold = adjust_compatibility_threshold(
+            threshold=threshold_used,
+            species_count=species_count,
+            target_species=config.target_species,
+            step=config.compatibility_adjust_step,
+            min_threshold=config.min_compatibility_threshold,
+        )
 
         print(
             f"Generation {generation_index + 1}/{config.generations}: "
             f"best={best_fitness:.2f} mean={mean_fitness:.2f} "
-            f"median={median_fitness:.2f} species={species_count}"
+            f"median={median_fitness:.2f} species={species_count} "
+            f"threshold={threshold_used:.2f}->{next_threshold:.2f} "
+            f"best_steps={best_steps} best_pipes_passed={best_pipes_passed} "
+            f"mean_pipes_passed={mean_pipes_passed:.2f}"
         )
 
         output["generations"].append(
@@ -259,9 +300,15 @@ def run_simulation(config: SimulationConfig) -> dict[str, Any]:
                 "mean_fitness": mean_fitness,
                 "median_fitness": median_fitness,
                 "species_count": species_count,
+                "compatibility_threshold": threshold_used,
+                "next_compatibility_threshold": next_threshold,
+                "best_steps": best_steps,
+                "best_pipes_passed": best_pipes_passed,
+                "mean_pipes_passed": mean_pipes_passed,
                 "genomes": generation_results,
             }
         )
+        config.compatibility_threshold = next_threshold
         population = evolve_population(population, tracker, config)
 
     output["best_genome"] = {
@@ -280,6 +327,11 @@ def write_stats(simulation_data: dict[str, Any], run_dir: Path, save_csv: bool) 
             "mean_fitness": generation["mean_fitness"],
             "median_fitness": generation["median_fitness"],
             "species_count": generation.get("species_count", 0),
+            "compatibility_threshold": generation.get("compatibility_threshold", 0.0),
+            "next_compatibility_threshold": generation.get("next_compatibility_threshold", 0.0),
+            "best_steps": generation.get("best_steps", 0),
+            "best_pipes_passed": generation.get("best_pipes_passed", 0),
+            "mean_pipes_passed": generation.get("mean_pipes_passed", 0.0),
         }
         for generation in simulation_data["generations"]
     ]
@@ -298,7 +350,18 @@ def write_stats(simulation_data: dict[str, Any], run_dir: Path, save_csv: bool) 
         with csv_path.open("w", encoding="utf-8", newline="") as file:
             writer = csv.DictWriter(
                 file,
-                fieldnames=["generation", "best_fitness", "mean_fitness", "median_fitness", "species_count"],
+                fieldnames=[
+                    "generation",
+                    "best_fitness",
+                    "mean_fitness",
+                    "median_fitness",
+                    "species_count",
+                    "compatibility_threshold",
+                    "next_compatibility_threshold",
+                    "best_steps",
+                    "best_pipes_passed",
+                    "mean_pipes_passed",
+                ],
             )
             writer.writeheader()
             writer.writerows(generation_stats)
