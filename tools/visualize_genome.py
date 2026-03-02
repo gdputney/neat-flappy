@@ -44,17 +44,8 @@ def load_genome_payload(path: Path) -> dict[str, Any]:
     with path.open("r", encoding="utf-8") as file:
         data = json.load(file)
 
-    if not isinstance(data, dict):
-        raise ValueError("Genome JSON root must be an object.")
-
-    if "best_genome" in data and isinstance(data["best_genome"], dict):
-        best_genome = data["best_genome"]
-        if "genome" in best_genome and isinstance(best_genome["genome"], dict):
-            return best_genome["genome"]
-
-    if "genome" in data and isinstance(data["genome"], dict):
+    if isinstance(data, dict) and "genome" in data and isinstance(data["genome"], dict):
         return data["genome"]
-
     return data
 
 
@@ -88,23 +79,20 @@ def dot_from_genome(genome: dict[str, Any]) -> str:
             color = INPUT_COLOR
         elif node_type == "output":
             color = OUTPUT_COLOR
-        shape = "circle"
-        if node_type == "input":
-            shape = "box"
-        elif node_type == "output":
-            shape = "doublecircle"
-        lines.append(f'  n{node.get("id", index)} [label="{label}", fillcolor="{color}", shape="{shape}"];')
+        lines.append(f'  n{node.get("id", index)} [label="{label}", fillcolor="{color}"];')
 
     for connection in connections:
-        if not bool(connection.get("enabled", True)):
-            continue
         source = connection["in_node"]
         target = connection["out_node"]
         weight = float(connection.get("weight", 0.0))
+        enabled = bool(connection.get("enabled", True))
         color = POS_EDGE_COLOR if weight >= 0 else NEG_EDGE_COLOR
+        style = "solid" if enabled else "dashed"
+        if not enabled:
+            color = DISABLED_EDGE_COLOR
         penwidth = max(0.5, min(6.0, abs(weight) * 2.0))
         lines.append(
-            f'  n{source} -> n{target} [label="{weight:+.2f}", color="{color}", penwidth={penwidth:.2f}];'
+            f'  n{source} -> n{target} [label="{weight:+.2f}", color="{color}", style="{style}", penwidth={penwidth:.2f}];'
         )
 
     lines.append("}")
@@ -148,8 +136,6 @@ def render_png_with_matplotlib(genome: dict[str, Any], png_path: Path) -> None:
     fig, ax = plt.subplots(figsize=(12, 7))
 
     for conn in connections:
-        if not bool(conn.get("enabled", True)):
-            continue
         source = conn["in_node"]
         target = conn["out_node"]
         if source not in positions or target not in positions:
@@ -157,14 +143,18 @@ def render_png_with_matplotlib(genome: dict[str, Any], png_path: Path) -> None:
         (x1, y1) = positions[source]
         (x2, y2) = positions[target]
         weight = float(conn.get("weight", 0.0))
+        enabled = bool(conn.get("enabled", True))
         color = POS_EDGE_COLOR if weight >= 0 else NEG_EDGE_COLOR
+        linestyle = "-" if enabled else "--"
+        if not enabled:
+            color = DISABLED_EDGE_COLOR
         linewidth = max(0.5, min(6.0, abs(weight) * 2.0))
 
         ax.annotate(
             "",
             xy=(x2, y2),
             xytext=(x1, y1),
-            arrowprops=dict(arrowstyle="->", color=color, lw=linewidth, linestyle="-", alpha=0.85),
+            arrowprops=dict(arrowstyle="->", color=color, lw=linewidth, linestyle=linestyle, alpha=0.85),
             zorder=1,
         )
         mx = (x1 + x2) / 2.0
