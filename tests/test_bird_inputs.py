@@ -39,6 +39,27 @@ class BirdInputTests(unittest.TestCase):
 
         self.assertEqual(inputs, [-0.75, 1.0, 1.0, 0.0, 0.0, 0.0])
 
+    def test_jump_respects_flap_cooldown(self) -> None:
+        bird = Bird(velocity=0.0, flap_cooldown_frames=2)
+
+        self.assertTrue(bird.jump())
+        self.assertEqual(bird.velocity, bird.jump_strength)
+
+        self.assertFalse(bird.jump())
+        self.assertEqual(bird.velocity, bird.jump_strength)
+
+        bird.update()
+        self.assertFalse(bird.jump())
+
+        bird.update()
+        self.assertTrue(bird.jump())
+
+    def test_zero_cooldown_allows_consecutive_jumps(self) -> None:
+        bird = Bird(velocity=0.0, flap_cooldown_frames=0)
+
+        self.assertTrue(bird.jump())
+        self.assertTrue(bird.jump())
+
 
 if __name__ == "__main__":
     unittest.main()
