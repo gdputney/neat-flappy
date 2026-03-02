@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from main import (
     FITNESS_CENTERING_PENALTY_SCALE,
@@ -7,7 +8,9 @@ from main import (
     SimulationConfig,
     adjust_compatibility_threshold,
     create_initial_genome,
+    decide_flap,
     evolve_population,
+    pipe_crossed_bird,
     run_simulation,
     simulate_genome,
 )
@@ -41,6 +44,7 @@ class SimulationStatsTests(unittest.TestCase):
             self.assertIn("best_steps", generation)
             self.assertIn("best_pipes_passed", generation)
             self.assertIn("mean_pipes_passed", generation)
+            self.assertIn("best_avg_shaping_penalty", generation)
 
             genomes = generation["genomes"]
             self.assertEqual(generation["best_steps"], max(genome["steps_alive"] for genome in genomes))
@@ -51,6 +55,12 @@ class SimulationStatsTests(unittest.TestCase):
             self.assertAlmostEqual(
                 generation["mean_pipes_passed"],
                 sum(genome["pipes_passed"] for genome in genomes) / len(genomes),
+            )
+
+            best_genome_result = max(genomes, key=lambda genome: genome["fitness"])
+            self.assertAlmostEqual(
+                generation["best_avg_shaping_penalty"],
+                best_genome_result.get("average_centering_penalty", 0.0),
             )
 
     def test_fitness_prioritizes_pipes_passed(self) -> None:
@@ -67,6 +77,40 @@ class SimulationStatsTests(unittest.TestCase):
             - self._expected_centering_penalty(result, config.world_height)
         )
         self.assertAlmostEqual(result["fitness"], expected)
+
+
+class FlapPolicyTests(unittest.TestCase):
+    def test_probabilistic_flap_policy_uses_output_as_probability(self) -> None:
+        with patch("main.random.random", return_value=0.2):
+            self.assertTrue(decide_flap(output=0.3, policy="probabilistic"))
+        with patch("main.random.random", return_value=0.4):
+            self.assertFalse(decide_flap(output=0.3, policy="probabilistic"))
+
+    def test_hysteresis_flap_policy_turns_on_off_with_thresholds(self) -> None:
+        self.assertTrue(decide_flap(output=0.7, policy="hysteresis", is_flapping=False))
+        self.assertFalse(decide_flap(output=0.3, policy="hysteresis", is_flapping=True))
+
+    def test_hysteresis_flap_policy_holds_state_in_middle_band(self) -> None:
+        self.assertTrue(decide_flap(output=0.5, policy="hysteresis", is_flapping=True))
+        self.assertFalse(decide_flap(output=0.5, policy="hysteresis", is_flapping=False))
+
+
+class PipePassingTests(unittest.TestCase):
+    def test_pipe_crossing_counts_each_pipe_once(self) -> None:
+        bird_x = 100.0
+        pipe_width = 80.0
+        pipe_a_positions = [220.0, 160.0, 40.0, -20.0]
+        pipe_b_positions = [320.0, 260.0, 180.0, 60.0, 10.0]
+
+        crossings = 0
+        for previous_x, current_x in zip(pipe_a_positions, pipe_a_positions[1:]):
+            crossings += int(pipe_crossed_bird(previous_x, current_x, pipe_width, bird_x))
+        for previous_x, current_x in zip(pipe_b_positions, pipe_b_positions[1:]):
+            crossings += int(pipe_crossed_bird(previous_x, current_x, pipe_width, bird_x))
+
+        self.assertEqual(crossings, 2)
+
+
 
 
 class ElitismTests(unittest.TestCase):

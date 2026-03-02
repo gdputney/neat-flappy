@@ -50,25 +50,23 @@ class Bird:
         self.y += self.velocity
 
     def get_inputs(self, pipes: Iterable[PipeLike]) -> list[float]:
-        """Return normalized neural-network inputs for NEAT.
+        """Return clipped neural-network inputs for NEAT.
 
-        The output is a list of values in roughly [-1, 1] or [0, 1], depending
-        on input meaning:
-          1) bird y position normalized by world height
-          2) bird vertical velocity normalized by max fall speed
-          3) horizontal distance to next pipe normalized by world width
-          4) signed offset from bird y to next gap center normalized by height
-          5) vertical distance from bird to next gap top normalized by height
-          6) vertical distance from bird to next gap bottom normalized by height
+        Input layout:
+          1) bird y position, centered to [-1, 1]
+          2) bird vertical velocity clipped to [-1, 1]
+          3) dx to next pipe in [0, 1]
+          4) dy to next gap center clipped to [-1, 1]
+          5) dy to next gap top clipped to [-1, 1]
+          6) dy to next gap bottom clipped to [-1, 1]
         """
         pipe_list = list(pipes)
         ahead_pipes = [p for p in pipe_list if p.x + 1 >= self.x]
         next_pipe = min(ahead_pipes or pipe_list, key=lambda p: p.x, default=None)
 
         if next_pipe is None:
-            # No pipes visible; provide neutral/default distances.
             return [
-                self._normalize_height(self.y),
+                self._normalize_height_centered(self.y),
                 self._normalize_velocity(self.velocity),
                 1.0,
                 0.0,
@@ -78,21 +76,20 @@ class Bird:
 
         horizontal_distance = next_pipe.x - self.x
         gap_center = (next_pipe.top + next_pipe.bottom) / 2.0
-        to_gap_center = self.y - gap_center
-        to_gap_top = self.y - next_pipe.top
-        to_gap_bottom = next_pipe.bottom - self.y
 
         return [
-            self._normalize_height(self.y),
+            self._normalize_height_centered(self.y),
             self._normalize_velocity(self.velocity),
-            self._clamp(horizontal_distance / self.world_width, -1.0, 1.0),
-            self._clamp(to_gap_center / self.world_height, -1.0, 1.0),
-            self._clamp(to_gap_top / self.world_height, -1.0, 1.0),
-            self._clamp(to_gap_bottom / self.world_height, -1.0, 1.0),
+            self._normalize_forward_distance(horizontal_distance),
+            self._normalize_vertical_delta(gap_center - self.y),
+            self._normalize_vertical_delta(next_pipe.top - self.y),
+            self._normalize_vertical_delta(next_pipe.bottom - self.y),
         ]
 
-    def _normalize_height(self, value: float) -> float:
-        return self._clamp(value / self.world_height, 0.0, 1.0)
+    def _normalize_height_centered(self, value: float) -> float:
+        if self.world_height <= 0:
+            return 0.0
+        return self._clamp((2.0 * (value / self.world_height)) - 1.0, -1.0, 1.0)
 
     def _normalize_velocity(self, value: float) -> float:
         max_upward = abs(self.jump_strength) if self.jump_strength else 1.0
@@ -100,6 +97,14 @@ class Bird:
         if value >= 0:
             return self._clamp(value / max_downward, -1.0, 1.0)
         return self._clamp(value / max_upward, -1.0, 1.0)
+
+    def _normalize_forward_distance(self, value: float) -> float:
+        width = self.world_width if self.world_width > 0 else 1.0
+        return self._clamp(value / width, 0.0, 1.0)
+
+    def _normalize_vertical_delta(self, value: float) -> float:
+        height = self.world_height if self.world_height > 0 else 1.0
+        return self._clamp(value / height, -1.0, 1.0)
 
     @staticmethod
     def _clamp(value: float, low: float, high: float) -> float:
