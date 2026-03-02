@@ -55,6 +55,49 @@ class NeatCycleSafetyTests(unittest.TestCase):
         output = genome.activate([0.2, 0.8])
         self.assertEqual(len(output), 1)
 
+    def test_toggle_enable_does_not_create_cycle(self) -> None:
+        genome = self._base_genome()
+        genome.node_genes.append({"id": 3, "type": "hidden", "bias": 0.0})
+        genome.connection_genes.extend(
+            [
+                {"in_node": 0, "out_node": 3, "weight": 1.0, "enabled": True, "innovation": 2},
+                {"in_node": 3, "out_node": 2, "weight": 1.0, "enabled": True, "innovation": 3},
+                {"in_node": 2, "out_node": 3, "weight": 0.7, "enabled": False, "innovation": 4},
+            ]
+        )
+
+        for _ in range(80):
+            genome._toggle_connection_enabled()
+            for gene in genome.connection_genes:
+                if not gene.get("enabled", True):
+                    continue
+                self.assertFalse(
+                    genome._has_enabled_path(int(gene["out_node"]), int(gene["in_node"])),
+                    msg=f"Toggle produced cycle-closing edge: {gene}",
+                )
+
+    def test_mutate_never_produces_cyclic_enabled_graph(self) -> None:
+        tracker = InnovationTracker(next_innovation=5)
+        genome = self._base_genome()
+        genome.node_genes.append({"id": 3, "type": "hidden", "bias": 0.0})
+        genome.connection_genes.extend(
+            [
+                {"in_node": 0, "out_node": 3, "weight": 1.0, "enabled": True, "innovation": 2},
+                {"in_node": 3, "out_node": 2, "weight": 1.0, "enabled": True, "innovation": 3},
+                {"in_node": 2, "out_node": 3, "weight": 1.0, "enabled": False, "innovation": 4},
+            ]
+        )
+
+        for _ in range(300):
+            genome.mutate(tracker)
+            for gene in genome.connection_genes:
+                if not gene.get("enabled", True):
+                    continue
+                self.assertFalse(
+                    genome._has_enabled_path(int(gene["out_node"]), int(gene["in_node"])),
+                    msg=f"Mutate produced cycle-closing edge: {gene}",
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

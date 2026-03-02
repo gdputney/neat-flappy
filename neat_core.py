@@ -40,6 +40,7 @@ class Genome:
             raise ValueError(f"Expected {len(input_nodes)} inputs, received {len(inputs)}")
 
         node_lookup = {int(node["id"]): node for node in self.node_genes}
+        self._repair_cycles_in_enabled_graph()
         enabled_edges = [gene for gene in self.connection_genes if gene.get("enabled", True)]
 
         indegree = {int(node["id"]): 0 for node in self.node_genes}
@@ -62,7 +63,26 @@ class Genome:
                     queue.append(out_node)
 
         if len(topo_order) != len(indegree):
-            raise ValueError("Genome has recurrent/cyclic enabled connections; feedforward eval failed")
+            self._repair_cycles_in_enabled_graph()
+            enabled_edges = [gene for gene in self.connection_genes if gene.get("enabled", True)]
+            indegree = {int(node["id"]): 0 for node in self.node_genes}
+            outgoing = {int(node["id"]): [] for node in self.node_genes}
+            for edge in enabled_edges:
+                in_node = int(edge["in_node"])
+                out_node = int(edge["out_node"])
+                indegree[out_node] = indegree.get(out_node, 0) + 1
+                outgoing.setdefault(in_node, []).append(edge)
+
+            queue = [node_id for node_id, degree in indegree.items() if degree == 0]
+            topo_order = []
+            while queue:
+                current = queue.pop(0)
+                topo_order.append(current)
+                for edge in outgoing.get(current, []):
+                    out_node = int(edge["out_node"])
+                    indegree[out_node] -= 1
+                    if indegree[out_node] == 0:
+                        queue.append(out_node)
 
         values = {int(node["id"]): 0.0 for node in self.node_genes}
         for input_value, node in zip(inputs, input_nodes):
@@ -107,7 +127,15 @@ class Genome:
         if not self.connection_genes:
             return
         gene = random.choice(self.connection_genes)
-        gene["enabled"] = not bool(gene.get("enabled", True))
+        currently_enabled = bool(gene.get("enabled", True))
+        if currently_enabled:
+            gene["enabled"] = False
+            return
+
+        in_node = int(gene["in_node"])
+        out_node = int(gene["out_node"])
+        if not self.would_create_cycle(in_node, out_node):
+            gene["enabled"] = True
 
     def _add_node_mutation(self, tracker: InnovationTracker | None = None) -> None:
         enabled_connections = [gene for gene in self.connection_genes if gene.get("enabled", True)]
@@ -161,6 +189,8 @@ class Genome:
                 if topo_rank.get(a, 0) >= topo_rank.get(b, 0):
                     continue
                 if self._node_type(b) == "input":
+                    continue
+                if self.would_create_cycle(a, b):
                     continue
                 candidates.append((a, b))
 
@@ -262,6 +292,87 @@ class Genome:
             if int(node["id"]) == int(node_id):
                 return str(node.get("type", "hidden"))
         return "hidden"
+
+    def _has_enabled_path(self, src: int, dst: int) -> bool:
+        src = int(src)
+        dst = int(dst)
+        if src == dst:
+            return True
+
+        adjacency: dict[int, list[int]] = {}
+        for gene in self.connection_genes:
+            if not gene.get("enabled", True):
+                continue
+            in_node = int(gene["in_node"])
+            out_node = int(gene["out_node"])
+            adjacency.setdefault(in_node, []).append(out_node)
+
+        queue: deque[int] = deque([src])
+        visited = {src}
+        while queue:
+            current = queue.popleft()
+            for nxt in adjacency.get(current, []):
+                if nxt == dst:
+                    return True
+                if nxt in visited:
+                    continue
+                visited.add(nxt)
+                queue.append(nxt)
+        return False
+
+    def would_create_cycle(self, src: int, dst: int) -> bool:
+        src = int(src)
+        dst = int(dst)
+        if src == dst:
+            return True
+        return self._has_enabled_path(dst, src)
+
+    def _repair_cycles_in_enabled_graph(self) -> None:
+        while True:
+            cyclic_nodes = self._enabled_cyclic_nodes()
+            if not cyclic_nodes:
+                return
+
+            candidates = [
+                gene
+                for gene in self.connection_genes
+                if gene.get("enabled", True)
+                and int(gene["in_node"]) in cyclic_nodes
+                and int(gene["out_node"]) in cyclic_nodes
+            ]
+            if not candidates:
+                return
+
+            edge_to_disable = max(
+                candidates,
+                key=lambda g: (int(g.get("innovation", -1)), -abs(float(g.get("weight", 0.0)))),
+            )
+            edge_to_disable["enabled"] = False
+
+    def _enabled_cyclic_nodes(self) -> set[int]:
+        node_ids = {int(node["id"]) for node in self.node_genes}
+        indegree = {node_id: 0 for node_id in node_ids}
+        outgoing: dict[int, list[int]] = {node_id: [] for node_id in node_ids}
+
+        for gene in self.connection_genes:
+            if not gene.get("enabled", True):
+                continue
+            in_node = int(gene["in_node"])
+            out_node = int(gene["out_node"])
+            outgoing.setdefault(in_node, []).append(out_node)
+            indegree[out_node] = indegree.get(out_node, 0) + 1
+
+        queue: deque[int] = deque(node_id for node_id, degree in indegree.items() if degree == 0)
+        processed: set[int] = set()
+        while queue:
+            current = queue.popleft()
+            processed.add(current)
+            for out_node in outgoing.get(current, []):
+                indegree[out_node] -= 1
+                if indegree[out_node] == 0:
+                    queue.append(out_node)
+
+        return node_ids - processed
 
     def _topological_rank(self) -> dict[int, int]:
         input_ids = [int(node["id"]) for node in self._nodes_by_type("input")]
