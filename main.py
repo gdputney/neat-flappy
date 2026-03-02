@@ -213,6 +213,91 @@ def simulate_genome(genome: Genome, config: SimulationConfig) -> dict[str, Any]:
     }
 
 
+def run_debug_one_episode(config: SimulationConfig, interval: int = 20) -> dict[str, Any]:
+    """Run a single random genome episode and print periodic state snapshots."""
+    if config.seed is not None:
+        random.seed(config.seed)
+
+    tracker = InnovationTracker()
+    genome = create_initial_genome(input_size=NETWORK_INPUT_SIZE, output_size=NETWORK_OUTPUT_SIZE, tracker=tracker)
+    bird = Bird(world_width=config.world_width, world_height=config.world_height)
+    first_pipe = Pipe(x=config.world_width + 100.0, world_height=config.world_height)
+    pipes = [first_pipe]
+    passed_ids: set[int] = set()
+    reached_first_pipe = False
+    pipes_passed = 0
+    is_flapping = False
+
+    print(f"[debug-one] initial_pipe_spawn_x={first_pipe.x:.2f} initial_pipe_speed={first_pipe.speed:.2f}")
+
+    steps_executed = 0
+    for step in range(config.max_steps):
+        steps_executed = step + 1
+        if pipes[-1].x < config.world_width - config.pipe_spacing:
+            pipes.append(Pipe(x=config.world_width + 50.0, world_height=config.world_height))
+
+        ahead_pipes = [pipe for pipe in pipes if (pipe.x + pipe.width) >= bird.x]
+        next_pipe = min(ahead_pipes, key=lambda pipe: pipe.x) if ahead_pipes else None
+        next_pipe_x = next_pipe.x if next_pipe is not None else float("nan")
+        dx_to_next_pipe = next_pipe_x - bird.x if next_pipe is not None else float("nan")
+        if step % interval == 0:
+            print(
+                "[debug-one] "
+                f"t={step} "
+                f"bird_x={bird.x:.2f} "
+                f"bird_y={bird.y:.2f} "
+                f"next_pipe_x={next_pipe_x:.2f} "
+                f"dx_to_next_pipe={dx_to_next_pipe:.2f} "
+                f"reached_first_pipe={reached_first_pipe} "
+                f"pipes_passed={pipes_passed}"
+            )
+
+        inputs = bird.get_inputs(pipes)
+        output = genome.activate(inputs)[0]
+        flap = decide_flap(output, config.flap_policy, is_flapping=is_flapping)
+        is_flapping = flap
+        if flap:
+            bird.jump()
+
+        previous_pipe_x = {id(pipe): pipe.x for pipe in pipes}
+        bird.update_physics()
+        for pipe in pipes:
+            pipe.update()
+
+        pipes = [pipe for pipe in pipes if (pipe.x + pipe.width) > -5]
+
+        if bird.y < 0 or bird.y > config.world_height:
+            break
+
+        crashed_into_pipe = False
+        for pipe in pipes:
+            if bird_hits_pipe(bird, pipe):
+                crashed_into_pipe = True
+            previous_x = previous_pipe_x.get(id(pipe), pipe.x)
+            if pipe_crossed_bird(previous_x, pipe.x, pipe.width, bird.x) and id(pipe) not in passed_ids:
+                passed_ids.add(id(pipe))
+                pipes_passed += 1
+
+        if not reached_first_pipe and first_pipe.x <= bird.x:
+            reached_first_pipe = True
+
+        if crashed_into_pipe:
+            break
+
+    print(
+        "[debug-one] final "
+        f"steps_executed={steps_executed} "
+        f"reached_first_pipe={reached_first_pipe} "
+        f"pipes_passed={pipes_passed}"
+    )
+
+    return {
+        "steps_executed": steps_executed,
+        "reached_first_pipe": reached_first_pipe,
+        "pipes_passed": pipes_passed,
+    }
+
+
 def speciate_population(population: list[Genome], threshold: float) -> list[list[Genome]]:
     species: list[list[Genome]] = []
     for genome in population:
@@ -622,6 +707,11 @@ def parse_args() -> argparse.Namespace:
         default="probabilistic",
         help="Policy for converting network output to flap action",
     )
+    parser.add_argument(
+        "--debug-one",
+        action="store_true",
+        help="Run exactly one episode with periodic debug logging",
+    )
     return parser.parse_args()
 
 
@@ -639,6 +729,10 @@ def main() -> None:
             web_path = Path(__file__).resolve().parent / "web" / "simulation.json"
             out_path = write_record_replay(replay_data["result"], generation_metadata, web_path)
             print(f"Saved record replay output: {out_path}")
+        return
+
+    if args.debug_one:
+        run_debug_one_episode(config)
         return
 
     simulation_data = run_simulation(config)
