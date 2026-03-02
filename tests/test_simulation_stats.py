@@ -9,6 +9,7 @@ from pipe import Pipe
 from main import (
     FIRST_PIPE_REACHED_BONUS,
     FITNESS_CENTERING_PENALTY_SCALE,
+    SHAPING_SCALE,
     InnovationTracker,
     NETWORK_INPUT_SIZE,
     SimulationConfig,
@@ -16,6 +17,7 @@ from main import (
     create_initial_genome,
     decide_flap,
     evolve_population,
+    parse_args,
     pipe_crossed_bird,
     run_debug_one_episode,
     run_simulation,
@@ -85,6 +87,21 @@ class SimulationStatsTests(unittest.TestCase):
                 best_genome_result.get("reached_first_pipe_bonus", 0.0),
             )
 
+    def test_generation_log_includes_max_steps(self) -> None:
+        config = SimulationConfig(population_size=3, generations=1, max_steps=17, seed=11)
+
+        stream = io.StringIO()
+        with redirect_stdout(stream):
+            run_simulation(config)
+
+        output = stream.getvalue()
+        self.assertIn("max_steps=17", output)
+
+
+    def test_default_shaping_scale_reduces_penalty_contribution(self) -> None:
+        self.assertEqual(SimulationConfig().shaping_scale, SHAPING_SCALE)
+        self.assertAlmostEqual(SimulationConfig().shaping_scale, 0.1)
+
     def test_fitness_prioritizes_pipes_passed(self) -> None:
         config = SimulationConfig(max_steps=15, seed=3)
         tracker = InnovationTracker()
@@ -96,7 +113,11 @@ class SimulationStatsTests(unittest.TestCase):
             result["steps_alive"]
             + (result["pipes_passed"] * 5000.0)
             + (FIRST_PIPE_REACHED_BONUS if result["reached_first_pipe_bonus"] > 0 else 0.0)
-            - (self._expected_centering_penalty(result, config.world_height) * config.shaping_weight)
+            - (
+                self._expected_centering_penalty(result, config.world_height)
+                * config.shaping_weight
+                * config.shaping_scale
+            )
         )
         self.assertAlmostEqual(result["fitness"], expected)
         self.assertEqual(result["pipes_reward"], result["pipes_passed"] * 5000.0)
@@ -116,6 +137,14 @@ class SimulationStatsTests(unittest.TestCase):
         self.assertEqual(result["screen_bounds"]["y_min"], 0.0)
         self.assertEqual(result["screen_bounds"]["y_max"], config.world_height)
 
+
+
+class CliParsingTests(unittest.TestCase):
+    def test_parse_args_accepts_max_steps(self) -> None:
+        with patch("sys.argv", ["main.py", "--max-steps", "321"]):
+            args = parse_args()
+
+        self.assertEqual(args.max_steps, 321)
 
 
 class DebugOneEpisodeTests(unittest.TestCase):
