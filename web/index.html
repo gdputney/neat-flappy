@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Flappy Replay Viewer</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        font-family: Arial, sans-serif;
+      }
+      body {
+        margin: 0;
+        padding: 16px;
+        background: #111;
+        color: #eee;
+      }
+      .container {
+        max-width: 920px;
+        margin: 0 auto;
+      }
+      .controls {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+        margin-bottom: 12px;
+      }
+      canvas {
+        width: 900px;
+        max-width: 100%;
+        aspect-ratio: 500 / 800;
+        border: 1px solid #444;
+        background: linear-gradient(#2f8dd1, #7ec0ee);
+        display: block;
+      }
+      label {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+      }
+      #status {
+        opacity: 0.9;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>Flappy Replay Viewer</h1>
+      <div class="controls">
+        <button id="playPauseBtn" type="button">Pause</button>
+        <label>
+          Speed
+          <input id="speedSlider" type="range" min="0.25" max="4" value="1" step="0.25" />
+          <span id="speedValue">1.00x</span>
+        </label>
+        <span id="status">Loading simulation.json...</span>
+      </div>
+      <canvas id="simCanvas" width="500" height="800"></canvas>
+    </div>
+
+    <script src="viewer.js"></script>
+  </body>
+</html>
