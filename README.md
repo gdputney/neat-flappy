@@ -28,6 +28,11 @@ python main.py
 Useful options:
 
 - `--seed <int>` for deterministic runs.
+- `--eval-episodes <int>` to evaluate each genome over multiple episodes and use mean fitness (default `1`).
+- `--deterministic-pipes` to force the same per-generation pipe sequence across all genomes.
+- `--flap-policy {probabilistic,hysteresis,deterministic}` to choose stochastic vs thresholded flap control.
+- `--population-size <int>` to set the number of genomes per generation (default `100`).
+- `--target-species <int>` and `--compatibility-adjust-step <float>` to tune speciation threshold adaptation (`8` and `0.02` by default).
 - `--csv` to additionally save `fitness.csv` in the run folder.
 - `--plot` to save `fitness_over_generations.png` in the run folder (requires `matplotlib`).
 - `--replay runs/run_<timestamp>/best_genome.json` to replay a single bird with a saved best genome.
@@ -36,7 +41,7 @@ Useful options:
 Example:
 
 ```bash
-python main.py --seed 7 --csv --plot
+python main.py --seed 7 --csv --plot --eval-episodes 3 --deterministic-pipes --flap-policy deterministic
 ```
 
 Per run, the script now writes:
@@ -46,6 +51,31 @@ Per run, the script now writes:
 - `runs/run_<timestamp>/fitness.csv` if `--csv` is used.
 - `runs/run_<timestamp>/fitness_over_generations.png` if `--plot` is used.
 - `runs/run_<timestamp>/best_genome.json` with the highest-fitness genome seen across all generations.
+
+
+## Recommended settings to break the ~5-pipe plateau
+
+Use these training knobs to reduce evaluation noise and stabilize species dynamics:
+
+- `--eval-episodes 3`
+- `--deterministic-pipes`
+- `--population-size 100`
+- `--target-species 8`
+- `--compatibility-adjust-step 0.02`
+- `--flap-policy deterministic` (optional but useful for lower action noise)
+
+Suggested training command:
+
+```bash
+python main.py --seed 7 --eval-episodes 3 --deterministic-pipes --population-size 100 --target-species 8 --compatibility-adjust-step 0.02 --flap-policy deterministic --csv --plot
+```
+
+Outputs are written to:
+
+- `runs/run_<timestamp>/stats.json` (includes per-generation `best_episode_pipes_passed_max` and `best_episode_pipes_passed_mean`)
+- `runs/run_<timestamp>/best_genome.json`
+- `runs/run_<timestamp>/fitness.csv` (if `--csv`)
+- `runs/run_<timestamp>/fitness_over_generations.png` (if `--plot`)
 
 ## Quick validation
 

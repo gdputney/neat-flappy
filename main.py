@@ -34,7 +34,7 @@ ALIVE_BONUS_AFTER_FIRST_PIPE = 0.2
 
 @dataclass
 class SimulationConfig:
-    population_size: int = 40
+    population_size: int = 100
     generations: int = 10
     max_steps: int = 1000
     world_width: float = 500.0
@@ -42,10 +42,12 @@ class SimulationConfig:
     pipe_spacing: float = 220.0
     seed: int | None = None
     compatibility_threshold: float = 1.2
-    target_species: int = 5
-    compatibility_adjust_step: float = 0.05
+    target_species: int = 8
+    compatibility_adjust_step: float = 0.02
     min_compatibility_threshold: float = 0.3
-    flap_policy: str = "hysteresis"
+    flap_policy: str = "probabilistic"
+    eval_episodes: int = 1
+    deterministic_pipes: bool = False
     shaping_weight: float = 10.0
     shaping_scale: float = SHAPING_SCALE
     flap_cooldown_frames: int = FLAP_COOLDOWN_FRAMES
@@ -62,20 +64,33 @@ class SimulationConfig:
 def decide_flap(
     output: float,
     policy: str,
+    rng: random.Random | None = None,
     is_flapping: bool = False,
     flap_on_threshold: float = FLAP_ON_THRESHOLD,
     flap_off_threshold: float = FLAP_OFF_THRESHOLD,
 ) -> bool:
     if policy == "probabilistic":
         flap_probability = max(0.0, min(1.0, output))
-        return random.random() < flap_probability
-    if policy == "hysteresis":
+        generator = rng if rng is not None else random
+        return generator.random() < flap_probability
+    if policy in {"hysteresis", "deterministic"}:
         if output >= flap_on_threshold:
             return True
         if output <= flap_off_threshold:
             return False
         return is_flapping
     raise ValueError(f"Unknown flap policy: {policy}")
+
+
+def derive_seed(*parts: int) -> int:
+    """Derive a deterministic 64-bit seed from integer parts."""
+    value = 0x9E3779B97F4A7C15
+    for part in parts:
+        mixed = (int(part) + 0x9E3779B97F4A7C15) & 0xFFFFFFFFFFFFFFFF
+        value ^= mixed
+        value = (value * 0xBF58476D1CE4E5B9) & 0xFFFFFFFFFFFFFFFF
+        value ^= value >> 30
+    return value
 
 
 def create_initial_genome(input_size: int, output_size: int, tracker: InnovationTracker) -> Genome:
@@ -155,7 +170,15 @@ def bounded_gap_shaping(abs_gap_error: float) -> float:
     return clipped_error * clipped_error
 
 
-def simulate_genome(genome: Genome, config: SimulationConfig) -> dict[str, Any]:
+def simulate_genome(
+    genome: Genome,
+    config: SimulationConfig,
+    pipe_rng_seed: int | None = None,
+    action_rng_seed: int | None = None,
+) -> dict[str, Any]:
+    pipe_rng = random.Random(pipe_rng_seed) if pipe_rng_seed is not None else random
+    action_rng = random.Random(action_rng_seed) if action_rng_seed is not None else None
+
     bird = Bird(
         world_width=config.world_width,
         world_height=config.world_height,
@@ -163,7 +186,7 @@ def simulate_genome(genome: Genome, config: SimulationConfig) -> dict[str, Any]:
         velocity_min=config.velocity_min,
         velocity_max=config.velocity_max,
     )
-    first_pipe = Pipe(x=config.world_width + 120.0, world_height=config.world_height)
+    first_pipe = Pipe(x=config.world_width + 120.0, world_height=config.world_height, rng=pipe_rng)
     pipes = [first_pipe]
     passed_ids: set[int] = set()
     frames: list[dict[str, Any]] = []
@@ -187,13 +210,14 @@ def simulate_genome(genome: Genome, config: SimulationConfig) -> dict[str, Any]:
 
     while alive and steps < config.max_steps:
         if pipes[-1].x < config.world_width - config.pipe_spacing:
-            pipes.append(Pipe(x=config.world_width + 50.0, world_height=config.world_height))
+            pipes.append(Pipe(x=config.world_width + 50.0, world_height=config.world_height, rng=pipe_rng))
 
         inputs = bird.get_inputs(pipes)
         output = genome.activate(inputs)[0]
         flap = decide_flap(
             output,
             config.flap_policy,
+            rng=action_rng,
             is_flapping=is_flapping,
             flap_on_threshold=config.flap_on_threshold,
             flap_off_threshold=config.flap_off_threshold,
@@ -546,6 +570,35 @@ def deserialize_genome(data: dict[str, Any]) -> Genome:
     )
 
 
+def evaluate_genome(
+    genome: Genome,
+    config: SimulationConfig,
+    generation_index: int,
+    genome_index: int,
+) -> dict[str, Any]:
+    base_seed = int(config.seed or 0)
+    episode_results: list[dict[str, Any]] = []
+
+    for episode_index in range(max(1, config.eval_episodes)):
+        if config.deterministic_pipes:
+            pipe_seed = derive_seed(base_seed, generation_index, episode_index)
+        else:
+            pipe_seed = derive_seed(base_seed, generation_index, genome_index, episode_index)
+        action_seed = derive_seed(base_seed, generation_index, genome_index, episode_index, 17)
+        episode_results.append(
+            simulate_genome(genome, config, pipe_rng_seed=pipe_seed, action_rng_seed=action_seed)
+        )
+
+    mean_fitness = sum(result["fitness"] for result in episode_results) / len(episode_results)
+    genome.fitness = mean_fitness
+    representative = copy.deepcopy(max(episode_results, key=lambda result: result["fitness"]))
+    representative["episode_fitnesses"] = [result["fitness"] for result in episode_results]
+    representative["episode_pipes_passed"] = [result["pipes_passed"] for result in episode_results]
+    representative["fitness"] = mean_fitness
+    representative["eval_episodes"] = len(episode_results)
+    return representative
+
+
 def run_simulation(config: SimulationConfig) -> dict[str, Any]:
     if config.seed is not None:
         random.seed(config.seed)
@@ -565,7 +618,7 @@ def run_simulation(config: SimulationConfig) -> dict[str, Any]:
     for generation_index in range(config.generations):
         generation_results = []
         for genome_index, genome in enumerate(population):
-            result = simulate_genome(genome, config)
+            result = evaluate_genome(genome, config, generation_index, genome_index)
             generation_results.append({"genome_index": genome_index, **result})
             output["position_history"][f"g{generation_index}_genome{genome_index}"] = {
                 str(frame["step"]): {
@@ -589,6 +642,13 @@ def run_simulation(config: SimulationConfig) -> dict[str, Any]:
         best_pipes_passed = max(pipes_passed)
         mean_pipes_passed = sum(pipes_passed) / len(pipes_passed)
         best_result = max(generation_results, key=lambda result: result["fitness"])
+        best_episode_pipes_passed = best_result.get("episode_pipes_passed", [best_result.get("pipes_passed", 0)])
+        best_episode_pipes_passed_max = max(best_episode_pipes_passed) if best_episode_pipes_passed else 0
+        best_episode_pipes_passed_mean = (
+            sum(best_episode_pipes_passed) / len(best_episode_pipes_passed)
+            if best_episode_pipes_passed
+            else 0.0
+        )
         best_avg_shaping_penalty = best_result.get("average_centering_penalty", 0.0)
         best_avg_abs_gap_error = best_result.get("avg_abs_gap_error", 0.0)
         best_mean_proximity_weight = best_result.get("mean_proximity_weight", 0.0)
@@ -642,6 +702,8 @@ def run_simulation(config: SimulationConfig) -> dict[str, Any]:
                 "best_avg_shaping_penalty": best_avg_shaping_penalty,
                 "best_avg_abs_gap_error": best_avg_abs_gap_error,
                 "best_mean_proximity_weight": best_mean_proximity_weight,
+                "best_episode_pipes_passed_max": best_episode_pipes_passed_max,
+                "best_episode_pipes_passed_mean": best_episode_pipes_passed_mean,
                 "genomes": generation_results,
             }
         )
@@ -676,6 +738,8 @@ def write_stats(simulation_data: dict[str, Any], run_dir: Path, save_csv: bool) 
             "best_avg_shaping_penalty": generation.get("best_avg_shaping_penalty", 0.0),
             "best_avg_abs_gap_error": generation.get("best_avg_abs_gap_error", 0.0),
             "best_mean_proximity_weight": generation.get("best_mean_proximity_weight", 0.0),
+            "best_episode_pipes_passed_max": generation.get("best_episode_pipes_passed_max", 0),
+            "best_episode_pipes_passed_mean": generation.get("best_episode_pipes_passed_mean", 0.0),
         }
         for generation in simulation_data["generations"]
     ]
@@ -712,6 +776,8 @@ def write_stats(simulation_data: dict[str, Any], run_dir: Path, save_csv: bool) 
                     "best_avg_shaping_penalty",
                     "best_avg_abs_gap_error",
                     "best_mean_proximity_weight",
+                    "best_episode_pipes_passed_max",
+                    "best_episode_pipes_passed_mean",
                 ],
             )
             writer.writeheader()
@@ -782,9 +848,8 @@ def load_genome_payload(genome_path: Path) -> tuple[dict[str, Any], dict[str, An
 
 def replay_genome(genome_data: dict[str, Any], config: SimulationConfig) -> dict[str, Any]:
     genome = deserialize_genome(genome_data)
-    if config.seed is not None:
-        random.seed(config.seed)
-    return simulate_genome(genome, config)
+    replay_seed = None if config.seed is None else derive_seed(int(config.seed), 0, 0, 0)
+    return simulate_genome(genome, config, pipe_rng_seed=replay_seed, action_rng_seed=replay_seed)
 
 
 def write_record_replay(
@@ -875,9 +940,18 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--flap-policy",
-        choices=["probabilistic", "hysteresis"],
+        choices=["probabilistic", "hysteresis", "deterministic"],
         default="probabilistic",
         help="Policy for converting network output to flap action",
+    )
+    parser.add_argument("--eval-episodes", type=int, default=SimulationConfig.eval_episodes)
+    parser.add_argument("--deterministic-pipes", action="store_true")
+    parser.add_argument("--population-size", type=int, default=SimulationConfig.population_size)
+    parser.add_argument("--target-species", type=int, default=SimulationConfig.target_species)
+    parser.add_argument(
+        "--compatibility-adjust-step",
+        type=float,
+        default=SimulationConfig.compatibility_adjust_step,
     )
     parser.add_argument(
         "--flap-cooldown-frames",
@@ -912,6 +986,11 @@ def main() -> None:
         velocity_min=min(args.vel_min, args.vel_max),
         velocity_max=max(args.vel_min, args.vel_max),
         ceiling_touch_penalty=max(0.0, args.ceiling_touch_penalty),
+        eval_episodes=max(1, args.eval_episodes),
+        deterministic_pipes=args.deterministic_pipes,
+        population_size=max(2, args.population_size),
+        target_species=max(1, args.target_species),
+        compatibility_adjust_step=max(0.0, args.compatibility_adjust_step),
         debug_no_flap=args.debug_no_flap,
         debug_always_flap=args.debug_always_flap,
     )
