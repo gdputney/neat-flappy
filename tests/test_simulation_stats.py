@@ -101,6 +101,56 @@ class SimulationStatsTests(unittest.TestCase):
         self.assertAlmostEqual(result["fitness"], expected)
         self.assertEqual(result["pipes_reward"], result["pipes_passed"] * 5000.0)
 
+    def test_simulate_genome_reports_death_details(self) -> None:
+        config = SimulationConfig(max_steps=10, seed=5)
+        tracker = InnovationTracker()
+        genome = create_initial_genome(input_size=NETWORK_INPUT_SIZE, output_size=1, tracker=tracker)
+
+        result = simulate_genome(genome, config)
+
+        self.assertIn("death_reason", result)
+        self.assertIn(result["death_reason"], {"hit_ceiling", "hit_ground", "hit_pipe", "max_steps"})
+        self.assertIn("death_bird_y", result)
+        self.assertIn("death_bird_velocity", result)
+        self.assertIn("screen_bounds", result)
+        self.assertEqual(result["screen_bounds"]["y_min"], 0.0)
+        self.assertEqual(result["screen_bounds"]["y_max"], config.world_height)
+
+
+
+class DebugOneEpisodeTests(unittest.TestCase):
+    def test_debug_one_episode_logs_requested_fields(self) -> None:
+        config = SimulationConfig(max_steps=41, seed=4)
+
+        stream = io.StringIO()
+        with redirect_stdout(stream):
+            result = run_debug_one_episode(config)
+
+        output = stream.getvalue()
+        self.assertIn("initial_pipe_spawn_x=", output)
+        self.assertIn("initial_pipe_speed=", output)
+        self.assertIn("t=0", output)
+        self.assertIn("t=20", output)
+        self.assertIn("bird_x=", output)
+        self.assertIn("bird_y=", output)
+        self.assertIn("next_pipe_x=", output)
+        self.assertIn("dx_to_next_pipe=", output)
+        self.assertIn("reached_first_pipe=", output)
+        self.assertIn("pipes_passed=", output)
+        self.assertIn("death_reason=", output)
+        self.assertIn("death_bird_y=", output)
+        self.assertIn("death_bird_vel=", output)
+        self.assertIn("screen_bounds_y=", output)
+
+        self.assertIn("steps_executed", result)
+        self.assertIn("reached_first_pipe", result)
+        self.assertIn("pipes_passed", result)
+        self.assertIn("death_reason", result)
+        self.assertIn("death_bird_y", result)
+        self.assertIn("death_bird_velocity", result)
+        self.assertIn("screen_bounds", result)
+
+
 
 class DebugOneEpisodeTests(unittest.TestCase):
     def test_debug_one_episode_logs_requested_fields(self) -> None:
