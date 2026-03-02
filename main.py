@@ -1,4 +1,4 @@
-"""Run a simple NEAT-style Flappy Bird simulation and export run statistics."""
+"""Run a NEAT Flappy Bird simulation and export run statistics."""
 
 from __future__ import annotations
 
@@ -7,67 +7,56 @@ import copy
 import csv
 import json
 import random
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
 from statistics import median
 from typing import Any
 
 from bird import Bird
-from neat_core import Genome
+from neat_core import Genome, InnovationTracker
 from pipe import Pipe
 
 
 @dataclass
-class SimpleGenome(Genome):
-    """Minimal concrete genome implementation used by this simulation script."""
-
-    weights: list[float] = field(default_factory=list)
-    bias: float = 0.0
-
-    def __post_init__(self) -> None:
-        if not self.weights:
-            self.weights = [random.uniform(-1.0, 1.0) for _ in range(5)]
-
-    def activate(self, inputs: list[float]) -> list[float]:
-        total = sum(w * i for w, i in zip(self.weights, inputs)) + self.bias
-        output = 1.0 / (1.0 + (2.718281828 ** (-total)))
-        return [output]
-
-    def mutate(self) -> None:
-        for index in range(len(self.weights)):
-            if random.random() < 0.3:
-                self.weights[index] += random.uniform(-0.4, 0.4)
-        if random.random() < 0.3:
-            self.bias += random.uniform(-0.4, 0.4)
-
-    def crossover(self, other: "Genome") -> "Genome":
-        if not isinstance(other, SimpleGenome):
-            raise TypeError("SimpleGenome can only crossover with SimpleGenome")
-
-        child_weights = [random.choice([a, b]) for a, b in zip(self.weights, other.weights)]
-        child_bias = random.choice([self.bias, other.bias])
-        return SimpleGenome(
-            node_genes=list(self.node_genes),
-            connection_genes=list(self.connection_genes),
-            weights=child_weights,
-            bias=child_bias,
-        )
-
-
-@dataclass
 class SimulationConfig:
-    population_size: int = 20
-    generations: int = 5
+    population_size: int = 40
+    generations: int = 10
     max_steps: int = 300
     world_width: float = 500.0
     world_height: float = 800.0
     pipe_spacing: float = 220.0
     seed: int | None = None
+    compatibility_threshold: float = 1.2
 
 
-def create_population(size: int) -> list[SimpleGenome]:
-    return [SimpleGenome() for _ in range(size)]
+def create_initial_genome(input_size: int, output_size: int, tracker: InnovationTracker) -> Genome:
+    node_genes = []
+    for node_id in range(input_size):
+        node_genes.append({"id": node_id, "type": "input", "bias": 0.0})
+
+    output_start = input_size
+    for node_id in range(output_start, output_start + output_size):
+        node_genes.append({"id": node_id, "type": "output", "bias": random.uniform(-1.0, 1.0)})
+
+    connection_genes = []
+    for input_id in range(input_size):
+        for output_id in range(output_start, output_start + output_size):
+            connection_genes.append(
+                {
+                    "in_node": input_id,
+                    "out_node": output_id,
+                    "weight": random.uniform(-1.0, 1.0),
+                    "enabled": True,
+                    "innovation": tracker.get_connection_innovation(input_id, output_id),
+                }
+            )
+
+    return Genome(node_genes=node_genes, connection_genes=connection_genes)
+
+
+def create_population(size: int, tracker: InnovationTracker) -> list[Genome]:
+    return [create_initial_genome(input_size=5, output_size=1, tracker=tracker) for _ in range(size)]
 
 
 def bird_hits_pipe(bird: Bird, pipe: Pipe) -> bool:
@@ -77,7 +66,7 @@ def bird_hits_pipe(bird: Bird, pipe: Pipe) -> bool:
     return not (pipe.top <= bird.y <= pipe.bottom)
 
 
-def simulate_genome(genome: SimpleGenome, config: SimulationConfig) -> dict[str, Any]:
+def simulate_genome(genome: Genome, config: SimulationConfig) -> dict[str, Any]:
     bird = Bird(world_width=config.world_width, world_height=config.world_height)
     pipes = [Pipe(x=config.world_width + 100.0, world_height=config.world_height)]
     passed_ids: set[int] = set()
@@ -134,7 +123,7 @@ def simulate_genome(genome: SimpleGenome, config: SimulationConfig) -> dict[str,
         )
         steps += 1
 
-    survival_reward = float(steps * 1.0)
+    survival_reward = float(steps)
     pipe_reward = float(pipes_passed * 150.0)
     crash_penalty = 50.0 if crashed else 0.0
     genome.fitness = max(0.0, survival_reward + pipe_reward - crash_penalty)
@@ -147,46 +136,71 @@ def simulate_genome(genome: SimpleGenome, config: SimulationConfig) -> dict[str,
     }
 
 
-def evolve_population(population: list[SimpleGenome]) -> list[SimpleGenome]:
-    population = sorted(population, key=lambda genome: genome.fitness, reverse=True)
-    elite_count = max(2, len(population) // 5)
-    elites = population[:elite_count]
+def speciate_population(population: list[Genome], threshold: float) -> list[list[Genome]]:
+    species: list[list[Genome]] = []
+    for genome in population:
+        placed = False
+        for group in species:
+            representative = group[0]
+            if genome.compatibility_distance(representative) <= threshold:
+                group.append(genome)
+                placed = True
+                break
+        if not placed:
+            species.append([genome])
+    return species
 
-    next_population: list[SimpleGenome] = [
-        SimpleGenome(
-            node_genes=list(genome.node_genes),
-            connection_genes=list(genome.connection_genes),
-            weights=list(genome.weights),
-            bias=genome.bias,
-        )
-        for genome in elites
-    ]
 
-    selection_pool = population[: max(2, len(population) // 2)]
+def evolve_population(population: list[Genome], tracker: InnovationTracker, config: SimulationConfig) -> list[Genome]:
+    species = speciate_population(population, config.compatibility_threshold)
+
+    adjusted_fitness: dict[int, float] = {}
+    for group in species:
+        group_size = max(len(group), 1)
+        for genome in group:
+            adjusted_fitness[id(genome)] = genome.fitness / group_size
+
+    total_adjusted = sum(adjusted_fitness.values()) or 1.0
+    next_population: list[Genome] = []
+
+    for group in species:
+        group_sorted = sorted(group, key=lambda genome: genome.fitness, reverse=True)
+        champion = copy.deepcopy(group_sorted[0])
+        champion.fitness = 0.0
+        next_population.append(champion)
+
+        group_adjusted = sum(adjusted_fitness[id(genome)] for genome in group)
+        offspring_quota = int(round((group_adjusted / total_adjusted) * len(population)))
+        offspring_quota = max(1, offspring_quota)
+
+        selection_pool = group_sorted[: max(2, len(group_sorted) // 2)]
+        for _ in range(max(0, offspring_quota - 1)):
+            parent_a = random.choice(selection_pool)
+            parent_b = random.choice(selection_pool)
+            child = parent_a.crossover(parent_b)
+            child.mutate(tracker)
+            next_population.append(child)
+
     while len(next_population) < len(population):
-        parent_a = random.choice(selection_pool)
-        parent_b = random.choice(selection_pool)
-        child = parent_a.crossover(parent_b)
-        child.mutate()
+        parent = random.choice(population)
+        child = copy.deepcopy(parent)
+        child.fitness = 0.0
+        child.mutate(tracker)
         next_population.append(child)
 
     return next_population[: len(population)]
 
 
-def serialize_genome(genome: SimpleGenome) -> dict[str, Any]:
+def serialize_genome(genome: Genome) -> dict[str, Any]:
     return {
-        "weights": list(genome.weights),
-        "bias": genome.bias,
         "fitness": genome.fitness,
         "node_genes": copy.deepcopy(genome.node_genes),
         "connection_genes": copy.deepcopy(genome.connection_genes),
     }
 
 
-def deserialize_genome(data: dict[str, Any]) -> SimpleGenome:
-    return SimpleGenome(
-        weights=[float(weight) for weight in data.get("weights", [])],
-        bias=float(data.get("bias", 0.0)),
+def deserialize_genome(data: dict[str, Any]) -> Genome:
+    return Genome(
         fitness=float(data.get("fitness", 0.0)),
         node_genes=copy.deepcopy(data.get("node_genes", [])),
         connection_genes=copy.deepcopy(data.get("connection_genes", [])),
@@ -197,14 +211,15 @@ def run_simulation(config: SimulationConfig) -> dict[str, Any]:
     if config.seed is not None:
         random.seed(config.seed)
 
-    population = create_population(config.population_size)
+    tracker = InnovationTracker()
+    population = create_population(config.population_size, tracker)
     output: dict[str, Any] = {
         "config": asdict(config),
         "generations": [],
         "position_history": {},
     }
 
-    best_genome: SimpleGenome | None = None
+    best_genome: Genome | None = None
     best_generation = -1
     best_genome_index = -1
 
@@ -229,10 +244,12 @@ def run_simulation(config: SimulationConfig) -> dict[str, Any]:
         best_fitness = max(fitnesses)
         mean_fitness = sum(fitnesses) / len(fitnesses)
         median_fitness = median(fitnesses)
+        species_count = len(speciate_population(population, config.compatibility_threshold))
 
         print(
             f"Generation {generation_index + 1}/{config.generations}: "
-            f"best={best_fitness:.2f} mean={mean_fitness:.2f} median={median_fitness:.2f}"
+            f"best={best_fitness:.2f} mean={mean_fitness:.2f} "
+            f"median={median_fitness:.2f} species={species_count}"
         )
 
         output["generations"].append(
@@ -241,10 +258,11 @@ def run_simulation(config: SimulationConfig) -> dict[str, Any]:
                 "best_fitness": best_fitness,
                 "mean_fitness": mean_fitness,
                 "median_fitness": median_fitness,
+                "species_count": species_count,
                 "genomes": generation_results,
             }
         )
-        population = evolve_population(population)
+        population = evolve_population(population, tracker, config)
 
     output["best_genome"] = {
         "generation": best_generation,
@@ -261,6 +279,7 @@ def write_stats(simulation_data: dict[str, Any], run_dir: Path, save_csv: bool) 
             "best_fitness": generation["best_fitness"],
             "mean_fitness": generation["mean_fitness"],
             "median_fitness": generation["median_fitness"],
+            "species_count": generation.get("species_count", 0),
         }
         for generation in simulation_data["generations"]
     ]
@@ -279,7 +298,7 @@ def write_stats(simulation_data: dict[str, Any], run_dir: Path, save_csv: bool) 
         with csv_path.open("w", encoding="utf-8", newline="") as file:
             writer = csv.DictWriter(
                 file,
-                fieldnames=["generation", "best_fitness", "mean_fitness", "median_fitness"],
+                fieldnames=["generation", "best_fitness", "mean_fitness", "median_fitness", "species_count"],
             )
             writer.writeheader()
             writer.writerows(generation_stats)
