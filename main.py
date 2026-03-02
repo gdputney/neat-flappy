@@ -20,7 +20,7 @@ from pipe import Pipe
 
 NETWORK_INPUT_SIZE = 6
 NETWORK_OUTPUT_SIZE = 1
-FITNESS_CENTERING_PENALTY_SCALE = 0.2
+FITNESS_CENTERING_PENALTY_SCALE = 5.0
 
 
 @dataclass
@@ -36,6 +36,20 @@ class SimulationConfig:
     target_species: int = 5
     compatibility_adjust_step: float = 0.05
     min_compatibility_threshold: float = 0.3
+    flap_policy: str = "probabilistic"
+
+
+def decide_flap(output: float, policy: str, is_flapping: bool = False) -> bool:
+    if policy == "probabilistic":
+        flap_probability = max(0.0, min(1.0, output))
+        return random.random() < flap_probability
+    if policy == "hysteresis":
+        if output > 0.6:
+            return True
+        if output < 0.4:
+            return False
+        return is_flapping
+    raise ValueError(f"Unknown flap policy: {policy}")
 
 
 def create_initial_genome(input_size: int, output_size: int, tracker: InnovationTracker) -> Genome:
@@ -77,6 +91,13 @@ def bird_hits_pipe(bird: Bird, pipe: Pipe) -> bool:
     return not (pipe.top <= bird.y <= pipe.bottom)
 
 
+
+
+def pipe_crossed_bird(previous_x: float, current_x: float, pipe_width: float, bird_x: float) -> bool:
+    previous_right_edge = previous_x + pipe_width
+    current_right_edge = current_x + pipe_width
+    return previous_right_edge >= bird_x and current_right_edge < bird_x
+
 def normalized_gap_center_distance(bird: Bird, pipes: list[Pipe], world_height: float) -> float:
     """Return normalized absolute distance from bird y to nearest upcoming gap center."""
     if not pipes:
@@ -100,15 +121,21 @@ def simulate_genome(genome: Genome, config: SimulationConfig) -> dict[str, Any]:
     pipes_passed = 0
     crashed = False
     centering_penalty = 0.0
+    average_centering_penalty = 0.0
+    is_flapping = False
 
     while alive and steps < config.max_steps:
         if pipes[-1].x < config.world_width - config.pipe_spacing:
             pipes.append(Pipe(x=config.world_width + 50.0, world_height=config.world_height))
 
         inputs = bird.get_inputs(pipes)
-        flap = genome.activate(inputs)[0] > 0.5
+        output = genome.activate(inputs)[0]
+        flap = decide_flap(output, config.flap_policy, is_flapping=is_flapping)
+        is_flapping = flap
         if flap:
             bird.jump()
+
+        previous_pipe_x = {id(pipe): pipe.x for pipe in pipes}
 
         bird.update_physics()
         for pipe in pipes:
@@ -124,7 +151,8 @@ def simulate_genome(genome: Genome, config: SimulationConfig) -> dict[str, Any]:
             if bird_hits_pipe(bird, pipe):
                 alive = False
                 crashed = True
-            if (pipe.x + pipe.width) < bird.x and id(pipe) not in passed_ids:
+            previous_x = previous_pipe_x.get(id(pipe), pipe.x)
+            if pipe_crossed_bird(previous_x, pipe.x, pipe.width, bird.x) and id(pipe) not in passed_ids:
                 passed_ids.add(id(pipe))
                 pipes_passed += 1
 
@@ -157,6 +185,7 @@ def simulate_genome(genome: Genome, config: SimulationConfig) -> dict[str, Any]:
     steps_survived = float(steps)
     pipe_reward = float(pipes_passed * 5000.0)
     alive_bonus = 25.0 if not crashed else 0.0
+    average_centering_penalty = (centering_penalty / steps_survived) if steps_survived > 0 else 0.0
     genome.fitness = pipe_reward + steps_survived + alive_bonus - centering_penalty
     return {
         "fitness": genome.fitness,
@@ -164,6 +193,8 @@ def simulate_genome(genome: Genome, config: SimulationConfig) -> dict[str, Any]:
         "pipes_passed": pipes_passed,
         "frames": frames,
         "crashed": crashed,
+        "centering_penalty": centering_penalty,
+        "average_centering_penalty": average_centering_penalty,
     }
 
 
@@ -302,6 +333,8 @@ def run_simulation(config: SimulationConfig) -> dict[str, Any]:
         best_steps = max(steps_alive)
         best_pipes_passed = max(pipes_passed)
         mean_pipes_passed = sum(pipes_passed) / len(pipes_passed)
+        best_result = max(generation_results, key=lambda result: result["fitness"])
+        best_avg_shaping_penalty = best_result.get("average_centering_penalty", 0.0)
         species_count = len(speciate_population(population, config.compatibility_threshold))
         threshold_used = config.compatibility_threshold
         next_threshold = adjust_compatibility_threshold(
@@ -318,7 +351,8 @@ def run_simulation(config: SimulationConfig) -> dict[str, Any]:
             f"median={median_fitness:.2f} species={species_count} "
             f"threshold={threshold_used:.2f}->{next_threshold:.2f} "
             f"best_steps={best_steps} best_pipes_passed={best_pipes_passed} "
-            f"mean_pipes_passed={mean_pipes_passed:.2f}"
+            f"mean_pipes_passed={mean_pipes_passed:.2f} "
+            f"best_avg_shaping_penalty={best_avg_shaping_penalty:.3f}"
         )
 
         output["generations"].append(
@@ -333,6 +367,7 @@ def run_simulation(config: SimulationConfig) -> dict[str, Any]:
                 "best_steps": best_steps,
                 "best_pipes_passed": best_pipes_passed,
                 "mean_pipes_passed": mean_pipes_passed,
+                "best_avg_shaping_penalty": best_avg_shaping_penalty,
                 "genomes": generation_results,
             }
         )
@@ -360,6 +395,7 @@ def write_stats(simulation_data: dict[str, Any], run_dir: Path, save_csv: bool) 
             "best_steps": generation.get("best_steps", 0),
             "best_pipes_passed": generation.get("best_pipes_passed", 0),
             "mean_pipes_passed": generation.get("mean_pipes_passed", 0.0),
+            "best_avg_shaping_penalty": generation.get("best_avg_shaping_penalty", 0.0),
         }
         for generation in simulation_data["generations"]
     ]
@@ -389,6 +425,7 @@ def write_stats(simulation_data: dict[str, Any], run_dir: Path, save_csv: bool) 
                     "best_steps",
                     "best_pipes_passed",
                     "mean_pipes_passed",
+                    "best_avg_shaping_penalty",
                 ],
             )
             writer.writeheader()
@@ -544,12 +581,18 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Replay the best genome and write web/simulation.json with fixed-dt frames",
     )
+    parser.add_argument(
+        "--flap-policy",
+        choices=["probabilistic", "hysteresis"],
+        default="probabilistic",
+        help="Policy for converting network output to flap action",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    config = SimulationConfig(seed=args.seed)
+    config = SimulationConfig(seed=args.seed, flap_policy=args.flap_policy)
 
     if args.replay is not None:
         replay_data, generation_metadata = replay_from_genome(args.replay, config)
