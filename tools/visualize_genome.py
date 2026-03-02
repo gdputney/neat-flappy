@@ -44,8 +44,13 @@ def load_genome_payload(path: Path) -> dict[str, Any]:
     with path.open("r", encoding="utf-8") as file:
         data = json.load(file)
 
-    if isinstance(data, dict) and "genome" in data and isinstance(data["genome"], dict):
-        return data["genome"]
+    if isinstance(data, dict):
+        if "best_genome" in data and isinstance(data["best_genome"], dict):
+            best_genome = data["best_genome"]
+            if "genome" in best_genome and isinstance(best_genome["genome"], dict):
+                return best_genome["genome"]
+        if "genome" in data and isinstance(data["genome"], dict):
+            return data["genome"]
     return data
 
 
@@ -112,8 +117,8 @@ def render_png_with_graphviz(dot_path: Path, png_path: Path) -> bool:
 def render_png_with_matplotlib(genome: dict[str, Any], png_path: Path) -> None:
     import matplotlib.pyplot as plt
 
-    nodes = genome.get("node_genes", [])
-    connections = genome.get("connection_genes", [])
+    nodes = genome["node_genes"]
+    connections = genome["connection_genes"]
 
     input_nodes = [n for n in nodes if n.get("type") == "input"]
     hidden_nodes = [n for n in nodes if n.get("type") == "hidden"]
@@ -189,6 +194,7 @@ def render_png_with_matplotlib(genome: dict[str, Any], png_path: Path) -> None:
 def main() -> None:
     args = parse_args()
     genome = load_genome_payload(args.genome)
+    assert len(genome["node_genes"]) > 0
 
     dot_text, node_line_count, edge_line_count = dot_from_genome(genome)
     args.dot_out.parent.mkdir(parents=True, exist_ok=True)
