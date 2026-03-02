@@ -9,121 +9,119 @@ from typing import Any
 
 
 @dataclass
+class InnovationTracker:
+    """Tracks globally consistent innovation numbers for structural mutations."""
+
+    next_innovation: int = 0
+    connection_innovations: dict[tuple[int, int], int] = field(default_factory=dict)
+
+    def get_connection_innovation(self, in_node: int, out_node: int) -> int:
+        key = (int(in_node), int(out_node))
+        if key not in self.connection_innovations:
+            self.connection_innovations[key] = self.next_innovation
+            self.next_innovation += 1
+        return self.connection_innovations[key]
+
+
+@dataclass
 class Genome:
-    """Represents an evolvable feedforward NEAT-style genome.
+    """Represents an evolvable feedforward NEAT genome."""
 
-    Attributes:
-        node_genes: Optional metadata describing node layout.
-        connection_genes: Optional metadata describing connection layout.
-        fitness: Scalar genome fitness value.
-        weight_layers: Feedforward weight matrices (layer by layer).
-        bias_layers: Feedforward bias vectors (layer by layer).
-    """
-
-    node_genes: list[Any] = field(default_factory=list)
-    connection_genes: list[Any] = field(default_factory=list)
+    node_genes: list[dict[str, Any]] = field(default_factory=list)
+    connection_genes: list[dict[str, Any]] = field(default_factory=list)
     fitness: float = 0.0
-    weight_layers: list[list[list[float]]] = field(default_factory=list)
-    bias_layers: list[list[float]] = field(default_factory=list)
 
     def activate(self, inputs: list[float]) -> list[float]:
-        """Run a feedforward pass with sigmoid activation."""
-        if not self.weight_layers:
-            raise ValueError("Genome has no weight layers; cannot activate network")
-        if len(self.weight_layers) != len(self.bias_layers):
-            raise ValueError("weight_layers and bias_layers must have the same number of layers")
+        """Run feedforward evaluation via topological ordering over enabled edges."""
+        input_nodes = self._nodes_by_type("input")
+        output_nodes = self._nodes_by_type("output")
+        if len(inputs) != len(input_nodes):
+            raise ValueError(f"Expected {len(input_nodes)} inputs, received {len(inputs)}")
 
-        activations = [float(value) for value in inputs]
+        node_lookup = {int(node["id"]): node for node in self.node_genes}
+        enabled_edges = [gene for gene in self.connection_genes if gene.get("enabled", True)]
 
-        for layer_index, (layer_weights, layer_biases) in enumerate(
-            zip(self.weight_layers, self.bias_layers)
-        ):
-            if len(layer_weights) != len(layer_biases):
-                raise ValueError(
-                    f"Layer {layer_index} has mismatched neuron counts between weights and biases"
-                )
+        indegree = {int(node["id"]): 0 for node in self.node_genes}
+        outgoing: dict[int, list[dict[str, Any]]] = {int(node["id"]): [] for node in self.node_genes}
+        for edge in enabled_edges:
+            in_node = int(edge["in_node"])
+            out_node = int(edge["out_node"])
+            indegree[out_node] = indegree.get(out_node, 0) + 1
+            outgoing.setdefault(in_node, []).append(edge)
 
-            next_activations: list[float] = []
-            for neuron_index, (neuron_weights, neuron_bias) in enumerate(
-                zip(layer_weights, layer_biases)
-            ):
-                if len(neuron_weights) != len(activations):
-                    raise ValueError(
-                        "Layer "
-                        f"{layer_index} neuron {neuron_index} expects {len(neuron_weights)} inputs "
-                        f"but received {len(activations)}"
-                    )
+        queue = [node_id for node_id, degree in indegree.items() if degree == 0]
+        topo_order: list[int] = []
+        while queue:
+            current = queue.pop(0)
+            topo_order.append(current)
+            for edge in outgoing.get(current, []):
+                out_node = int(edge["out_node"])
+                indegree[out_node] -= 1
+                if indegree[out_node] == 0:
+                    queue.append(out_node)
 
-                weighted_sum = sum(
-                    weight * value for weight, value in zip(neuron_weights, activations)
-                ) + neuron_bias
-                next_activations.append(self._sigmoid(weighted_sum))
+        if len(topo_order) != len(indegree):
+            raise ValueError("Genome has recurrent/cyclic enabled connections; feedforward eval failed")
 
-            activations = next_activations
+        values = {int(node["id"]): 0.0 for node in self.node_genes}
+        for input_value, node in zip(inputs, input_nodes):
+            values[int(node["id"])] = float(input_value)
 
-        return activations
+        incoming_map: dict[int, list[dict[str, Any]]] = {int(node["id"]): [] for node in self.node_genes}
+        for edge in enabled_edges:
+            incoming_map.setdefault(int(edge["out_node"]), []).append(edge)
 
-    def mutate(self) -> None:
-        """Apply core NEAT-style mutations to this genome.
+        for node_id in topo_order:
+            node = node_lookup[node_id]
+            if node.get("type") == "input":
+                continue
 
-        Includes:
-        - perturbing existing connection weights,
-        - adding a new node by splitting an existing connection,
-        - adding a new connection between existing nodes.
-        """
+            weighted_sum = float(node.get("bias", 0.0))
+            for edge in incoming_map.get(node_id, []):
+                in_node = int(edge["in_node"])
+                weighted_sum += float(edge.get("weight", 0.0)) * values[in_node]
+            values[node_id] = self._sigmoid(weighted_sum)
+
+        return [values[int(node["id"])] for node in output_nodes]
+
+    def mutate(self, tracker: InnovationTracker | None = None) -> None:
+        """Apply NEAT mutations: weights, add-node, add-connection, enable/disable toggle."""
         self._perturb_connection_weights()
 
-        if random.random() < 0.15:
-            self._add_node_mutation()
-
-        if random.random() < 0.25:
-            self._add_connection_mutation()
+        if random.random() < 0.05:
+            self._toggle_connection_enabled()
+        if random.random() < 0.2:
+            self._add_connection_mutation(tracker)
+        if random.random() < 0.1:
+            self._add_node_mutation(tracker)
 
     def _perturb_connection_weights(self, sigma: float = 0.3, reset_chance: float = 0.1) -> None:
-        """Randomly perturb connection weights in genes and layer matrices."""
         for connection in self.connection_genes:
-            if not isinstance(connection, dict):
-                continue
-            if "weight" not in connection:
-                continue
-
             if random.random() < reset_chance:
                 connection["weight"] = random.uniform(-1.0, 1.0)
             else:
-                connection["weight"] = float(connection["weight"]) + random.gauss(0.0, sigma)
+                connection["weight"] = float(connection.get("weight", 0.0)) + random.gauss(0.0, sigma)
 
-        for layer in self.weight_layers:
-            for neuron_weights in layer:
-                for index, weight in enumerate(neuron_weights):
-                    if random.random() < reset_chance:
-                        neuron_weights[index] = random.uniform(-1.0, 1.0)
-                    else:
-                        neuron_weights[index] = float(weight) + random.gauss(0.0, sigma)
+    def _toggle_connection_enabled(self) -> None:
+        if not self.connection_genes:
+            return
+        gene = random.choice(self.connection_genes)
+        gene["enabled"] = not bool(gene.get("enabled", True))
 
-    def _add_node_mutation(self) -> None:
-        """Split one enabled connection into two connections through a new node."""
-        enabled_connections = [
-            gene
-            for gene in self.connection_genes
-            if isinstance(gene, dict)
-            and gene.get("enabled", True)
-            and "in_node" in gene
-            and "out_node" in gene
-            and "weight" in gene
-        ]
-
+    def _add_node_mutation(self, tracker: InnovationTracker | None = None) -> None:
+        enabled_connections = [gene for gene in self.connection_genes if gene.get("enabled", True)]
         if not enabled_connections:
             return
 
         connection = random.choice(enabled_connections)
         connection["enabled"] = False
 
-        new_node_id = self._next_node_id()
-        self.node_genes.append(new_node_id)
-
         in_node = int(connection["in_node"])
         out_node = int(connection["out_node"])
         original_weight = float(connection["weight"])
+
+        new_node_id = self._next_node_id()
+        self.node_genes.append({"id": new_node_id, "type": "hidden", "bias": 0.0})
 
         self.connection_genes.append(
             {
@@ -131,6 +129,7 @@ class Genome:
                 "out_node": new_node_id,
                 "weight": 1.0,
                 "enabled": True,
+                "innovation": self._innovation_for(tracker, in_node, new_node_id),
             }
         )
         self.connection_genes.append(
@@ -139,31 +138,31 @@ class Genome:
                 "out_node": out_node,
                 "weight": original_weight,
                 "enabled": True,
+                "innovation": self._innovation_for(tracker, new_node_id, out_node),
             }
         )
 
-    def _add_connection_mutation(self) -> None:
-        """Add a new connection gene between two distinct existing nodes."""
-        node_ids = self._node_ids()
+    def _add_connection_mutation(self, tracker: InnovationTracker | None = None) -> None:
+        node_ids = [int(node["id"]) for node in self.node_genes]
         if len(node_ids) < 2:
-            if not node_ids:
-                self.node_genes.extend([0, 1])
-            elif len(node_ids) == 1:
-                self.node_genes.append(self._next_node_id())
-            node_ids = self._node_ids()
+            return
 
-        existing_pairs = {
-            (int(gene["in_node"]), int(gene["out_node"]))
-            for gene in self.connection_genes
-            if isinstance(gene, dict) and "in_node" in gene and "out_node" in gene
-        }
+        existing_pairs = {(int(g["in_node"]), int(g["out_node"])) for g in self.connection_genes}
+        topo_rank = self._topological_rank()
 
-        candidates = [
-            (a, b)
-            for a in node_ids
-            for b in node_ids
-            if a != b and (a, b) not in existing_pairs
-        ]
+        candidates: list[tuple[int, int]] = []
+        for a in node_ids:
+            for b in node_ids:
+                if a == b:
+                    continue
+                if (a, b) in existing_pairs:
+                    continue
+                if topo_rank.get(a, 0) >= topo_rank.get(b, 0):
+                    continue
+                if self._node_type(b) == "input":
+                    continue
+                candidates.append((a, b))
+
         if not candidates:
             return
 
@@ -174,157 +173,109 @@ class Genome:
                 "out_node": out_node,
                 "weight": random.uniform(-1.0, 1.0),
                 "enabled": True,
+                "innovation": self._innovation_for(tracker, in_node, out_node),
             }
         )
 
-    def _node_ids(self) -> list[int]:
-        """Return node IDs as integers from heterogeneous node gene formats."""
-        ids: list[int] = []
-        for node in self.node_genes:
-            if isinstance(node, int):
-                ids.append(node)
-            elif isinstance(node, dict) and "id" in node:
-                ids.append(int(node["id"]))
-        return sorted(set(ids))
-
-    def _next_node_id(self) -> int:
-        """Get the next available node id."""
-        existing = self._node_ids()
-        if not existing:
-            return 0
-        return max(existing) + 1
-
     def crossover(self, other: "Genome") -> "Genome":
-        """Combine two parent genomes into a child genome.
-
-        Matching connection genes are identified by innovation number when
-        present, otherwise by (in_node, out_node) pair. For matching genes,
-        the child inherits one parent's version at random. Disjoint/excess
-        genes are inherited from the fitter parent (or from either parent when
-        fitness ties).
-        """
         if not isinstance(other, Genome):
             raise TypeError("Genome.crossover() requires another Genome")
 
-        fitter_parent, other_parent = self, other
-        if other.fitness > self.fitness:
-            fitter_parent, other_parent = other, self
+        fitter, weaker = (self, other) if self.fitness >= other.fitness else (other, self)
+        equal_fitness = self.fitness == other.fitness
 
-        inherit_from_both = self.fitness == other.fitness
+        fitter_map = {int(g["innovation"]): g for g in fitter.connection_genes}
+        weaker_map = {int(g["innovation"]): g for g in weaker.connection_genes}
 
-        self_genes = {
-            self._connection_key(gene): gene
-            for gene in self.connection_genes
-            if isinstance(gene, dict)
-        }
-        other_genes = {
-            self._connection_key(gene): gene
-            for gene in other.connection_genes
-            if isinstance(gene, dict)
-        }
+        child_connections: list[dict[str, Any]] = []
+        all_innovations = sorted(set(fitter_map) | set(weaker_map))
+        for innovation in all_innovations:
+            gene_a = fitter_map.get(innovation)
+            gene_b = weaker_map.get(innovation)
 
-        all_keys = set(self_genes) | set(other_genes)
-        child_connections: list[Any] = []
-        for key in sorted(all_keys, key=str):
-            gene_a = self_genes.get(key)
-            gene_b = other_genes.get(key)
-
-            chosen_gene: dict[str, Any] | None = None
             if gene_a is not None and gene_b is not None:
-                chosen_gene = random.choice([gene_a, gene_b]).copy()
-            elif inherit_from_both:
-                chosen_gene = (gene_a or gene_b).copy() if (gene_a or gene_b) else None
-            else:
-                fitter_gene = (
-                    fitter_parent.connection_genes and self._gene_from_parent(fitter_parent, key)
-                )
-                if fitter_gene is not None:
-                    chosen_gene = fitter_gene.copy()
+                chosen = random.choice([gene_a, gene_b]).copy()
+                if (not gene_a.get("enabled", True) or not gene_b.get("enabled", True)) and random.random() < 0.75:
+                    chosen["enabled"] = False
+                child_connections.append(chosen)
+            elif equal_fitness and (gene_a or gene_b):
+                child_connections.append((gene_a or gene_b).copy())
+            elif gene_a is not None:
+                child_connections.append(gene_a.copy())
 
-            if chosen_gene is not None:
-                child_connections.append(chosen_gene)
+        node_ids = {int(node["id"]) for node in self.node_genes} | {int(node["id"]) for node in other.node_genes}
+        node_lookup = {
+            int(node["id"]): node
+            for node in (self.node_genes + other.node_genes)
+            if int(node["id"]) in node_ids
+        }
+        child_nodes = [node_lookup[node_id].copy() for node_id in sorted(node_ids)]
 
-        node_union = self._node_id_set() | other._node_id_set()
-        child_nodes: list[Any] = sorted(node_union)
+        return Genome(node_genes=child_nodes, connection_genes=child_connections, fitness=0.0)
 
-        child_weight_layers = self._blend_layers(self.weight_layers, other.weight_layers)
-        child_bias_layers = self._blend_layers(self.bias_layers, other.bias_layers)
+    def compatibility_distance(self, other: "Genome", c1: float = 1.0, c2: float = 1.0, c3: float = 0.4) -> float:
+        """NEAT compatibility distance based on excess/disjoint genes and weight difference."""
+        self_map = {int(g["innovation"]): g for g in self.connection_genes}
+        other_map = {int(g["innovation"]): g for g in other.connection_genes}
+        if not self_map and not other_map:
+            return 0.0
 
-        child = Genome(
-            node_genes=child_nodes,
-            connection_genes=child_connections,
-            weight_layers=child_weight_layers,
-            bias_layers=child_bias_layers,
-            fitness=0.0,
+        matching = set(self_map) & set(other_map)
+        all_keys = set(self_map) | set(other_map)
+
+        max_self = max(self_map) if self_map else -1
+        max_other = max(other_map) if other_map else -1
+        min_max = min(max_self, max_other)
+
+        excess = sum(1 for k in all_keys if k > min_max)
+        disjoint = len(all_keys) - len(matching) - excess
+
+        avg_weight_diff = 0.0
+        if matching:
+            avg_weight_diff = sum(
+                abs(float(self_map[k]["weight"]) - float(other_map[k]["weight"])) for k in matching
+            ) / len(matching)
+
+        n = max(len(self_map), len(other_map), 1)
+        return (c1 * excess / n) + (c2 * disjoint / n) + (c3 * avg_weight_diff)
+
+    def _innovation_for(self, tracker: InnovationTracker | None, in_node: int, out_node: int) -> int:
+        if tracker is not None:
+            return tracker.get_connection_innovation(in_node, out_node)
+
+        existing = [int(g.get("innovation", -1)) for g in self.connection_genes]
+        return (max(existing) + 1) if existing else 0
+
+    def _next_node_id(self) -> int:
+        existing = [int(node["id"]) for node in self.node_genes]
+        return (max(existing) + 1) if existing else 0
+
+    def _nodes_by_type(self, node_type: str) -> list[dict[str, Any]]:
+        return sorted(
+            [node for node in self.node_genes if node.get("type") == node_type],
+            key=lambda node: int(node["id"]),
         )
-        return child
 
-    def _connection_key(self, gene: dict[str, Any]) -> tuple[str, int, int] | tuple[str, int]:
-        """Build a stable key for matching genes across genomes."""
-        if "innovation" in gene:
-            return ("innovation", int(gene["innovation"]))
+    def _node_type(self, node_id: int) -> str:
+        for node in self.node_genes:
+            if int(node["id"]) == int(node_id):
+                return str(node.get("type", "hidden"))
+        return "hidden"
 
-        in_node = int(gene.get("in_node", -1))
-        out_node = int(gene.get("out_node", -1))
-        return ("pair", in_node, out_node)
+    def _topological_rank(self) -> dict[int, int]:
+        input_ids = [int(node["id"]) for node in self._nodes_by_type("input")]
+        hidden_ids = [int(node["id"]) for node in self._nodes_by_type("hidden")]
+        output_ids = [int(node["id"]) for node in self._nodes_by_type("output")]
 
-    def _gene_from_parent(
-        self,
-        parent: "Genome",
-        key: tuple[str, int, int] | tuple[str, int],
-    ) -> dict[str, Any] | None:
-        """Fetch a parent connection gene by match key."""
-        for gene in parent.connection_genes:
-            if not isinstance(gene, dict):
-                continue
-            if self._connection_key(gene) == key:
-                return gene
-        return None
-
-    def _node_id_set(self) -> set[int]:
-        """Return node IDs as a set for crossover union operations."""
-        return set(self._node_ids())
-
-    @staticmethod
-    def _blend_layers(
-        first: list[list[Any]],
-        second: list[list[Any]],
-    ) -> list[list[Any]]:
-        """Blend two layered parameter structures by random per-neuron inheritance."""
-        if not first:
-            return [[item for item in row] for row in second]
-        if not second:
-            return [[item for item in row] for row in first]
-
-        max_layers = max(len(first), len(second))
-        blended: list[list[Any]] = []
-
-        for layer_idx in range(max_layers):
-            layer_a = first[layer_idx] if layer_idx < len(first) else []
-            layer_b = second[layer_idx] if layer_idx < len(second) else []
-            max_neurons = max(len(layer_a), len(layer_b))
-            layer_result: list[Any] = []
-
-            for neuron_idx in range(max_neurons):
-                has_a = neuron_idx < len(layer_a)
-                has_b = neuron_idx < len(layer_b)
-                if has_a and has_b:
-                    source = random.choice([layer_a[neuron_idx], layer_b[neuron_idx]])
-                elif has_a:
-                    source = layer_a[neuron_idx]
-                elif has_b:
-                    source = layer_b[neuron_idx]
-                else:
-                    continue
-
-                if isinstance(source, list):
-                    layer_result.append(list(source))
-                else:
-                    layer_result.append(source)
-
-            blended.append(layer_result)
-
-        return blended
+        rank: dict[int, int] = {}
+        for node_id in input_ids:
+            rank[node_id] = 0
+        for offset, node_id in enumerate(hidden_ids, start=1):
+            rank[node_id] = offset
+        base = len(hidden_ids) + 1
+        for offset, node_id in enumerate(output_ids, start=base):
+            rank[node_id] = offset
+        return rank
 
     @staticmethod
     def _sigmoid(x: float) -> float:
