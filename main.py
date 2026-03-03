@@ -741,8 +741,6 @@ def run_simulation(config: SimulationConfig) -> dict[str, Any]:
             if best_episode_pipes_passed
             else 0.0
         )
-        best_pipes_passed_mean = best_episode_pipes_passed_mean
-        best_pipes_passed_max = best_episode_pipes_passed_max
         best_avg_shaping_reward = best_result.get("average_shaping_reward", 0.0)
         best_avg_abs_gap_error = best_result.get("avg_abs_gap_error", 0.0)
         best_mean_proximity_weight = best_result.get("mean_proximity_weight", 0.0)
@@ -773,8 +771,8 @@ def run_simulation(config: SimulationConfig) -> dict[str, Any]:
             f"threshold={threshold_used:.2f}->{next_threshold:.2f} "
             f"max_steps={config.max_steps} "
             f"best_steps={best_steps} "
-            f"best_pipes_passed_mean={best_pipes_passed_mean:.2f} "
-            f"best_pipes_passed_max={best_pipes_passed_max} "
+            f"best_pipes_passed_mean={best_episode_pipes_passed_mean:.2f} "
+            f"best_pipes_passed_max={best_episode_pipes_passed_max} "
             f"mean_pipes_passed={mean_pipes_passed:.2f} "
             f"best_steps_component={best_steps_component:.2f} "
             f"best_pipes_reward={best_pipes_reward:.2f} "
@@ -799,9 +797,8 @@ def run_simulation(config: SimulationConfig) -> dict[str, Any]:
                 "compatibility_threshold": threshold_used,
                 "next_compatibility_threshold": next_threshold,
                 "best_steps": best_steps,
-                "best_pipes_passed": best_pipes_passed_max,
-                "best_pipes_passed_mean": best_pipes_passed_mean,
-                "best_pipes_passed_max": best_pipes_passed_max,
+                "best_pipes_passed_mean": best_episode_pipes_passed_mean,
+                "best_pipes_passed_max": best_episode_pipes_passed_max,
                 "mean_pipes_passed": mean_pipes_passed,
                 "best_steps_component": best_steps_component,
                 "best_pipes_reward": best_pipes_reward,
@@ -841,12 +838,8 @@ def write_stats(simulation_data: dict[str, Any], run_dir: Path, save_csv: bool) 
             "compatibility_threshold": generation.get("compatibility_threshold", 0.0),
             "next_compatibility_threshold": generation.get("next_compatibility_threshold", 0.0),
             "best_steps": generation.get("best_steps", 0),
-            "best_pipes_passed": generation.get(
-                "best_pipes_passed",
-                generation.get("best_pipes_passed_max", 0),
-            ),
             "best_pipes_passed_mean": generation.get("best_pipes_passed_mean", 0.0),
-            "best_pipes_passed_max": generation.get("best_pipes_passed_max", generation.get("best_pipes_passed", 0)),
+            "best_pipes_passed_max": generation.get("best_pipes_passed_max", 0),
             "mean_pipes_passed": generation.get("mean_pipes_passed", 0.0),
             "best_steps_component": generation.get("best_steps_component", 0.0),
             "best_pipes_reward": generation.get("best_pipes_reward", 0.0),
