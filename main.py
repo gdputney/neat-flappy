@@ -6,6 +6,7 @@ import argparse
 import copy
 import csv
 import json
+import subprocess
 import random
 from dataclasses import asdict, dataclass
 from datetime import datetime
@@ -743,7 +744,13 @@ def run_simulation(config: SimulationConfig) -> dict[str, Any]:
         generation_results = []
         for genome_index, genome in enumerate(population):
             result = evaluate_genome(genome, config, generation_index, genome_index)
-            generation_results.append({"genome_index": genome_index, **result})
+            generation_results.append(
+                {
+                    "genome_index": genome_index,
+                    "genome_json": serialize_genome(genome),
+                    **result,
+                }
+            )
             output["position_history"][f"g{generation_index}_genome{genome_index}"] = {
                 str(frame["step"]): {
                     "bird": frame["bird"],
@@ -1045,6 +1052,110 @@ def write_record_replay(
     return output_path
 
 
+def get_git_commit() -> str | None:
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (subprocess.SubprocessError, FileNotFoundError):
+        return None
+    commit = result.stdout.strip()
+    return commit or None
+
+
+def write_web_evolution(
+    simulation_data: dict[str, Any],
+    config: SimulationConfig,
+    output_path: Path,
+    top_k: int,
+    eval_episode: int,
+) -> Path:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    bird_defaults = Bird(
+        world_width=config.world_width,
+        world_height=config.world_height,
+        flap_cooldown_frames=config.flap_cooldown_frames,
+        velocity_min=config.velocity_min,
+        velocity_max=config.velocity_max,
+    )
+    pipe_defaults = Pipe(x=config.world_width + 120.0, world_height=config.world_height)
+
+    payload: dict[str, Any] = {
+        "metadata": {
+            "created_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+            "git_commit": get_git_commit(),
+            "seed": config.seed,
+            "top_k": top_k,
+            "episode_index": eval_episode,
+            "flap_policy": config.flap_policy,
+            "config": {
+                "max_steps": config.max_steps,
+                "world_width": config.world_width,
+                "world_height": config.world_height,
+                "pipe_spacing": config.pipe_spacing,
+                "flap_cooldown_frames": config.flap_cooldown_frames,
+                "flap_on_threshold": config.flap_on_threshold,
+                "flap_off_threshold": config.flap_off_threshold,
+                "velocity_min": config.velocity_min,
+                "velocity_max": config.velocity_max,
+                "gravity": bird_defaults.gravity,
+                "jump_strength": bird_defaults.jump_strength,
+                "bird_x": bird_defaults.x,
+                "bird_start_y": bird_defaults.y,
+                "pipe_width": pipe_defaults.width,
+                "pipe_gap_size": pipe_defaults.gap_size,
+                "pipe_speed": pipe_defaults.speed,
+                "pipe_min_margin": pipe_defaults.min_margin,
+                "first_pipe_x": config.world_width + 120.0,
+                "new_pipe_x": config.world_width + 50.0,
+                "offscreen_pipe_right_threshold": -5.0,
+            },
+        },
+        "generations": [],
+    }
+
+    base_seed = int(config.seed or 0)
+    for generation in simulation_data.get("generations", []):
+        generation_index = int(generation.get("generation", 0))
+        pipe_seed = derive_seed(base_seed, generation_index, eval_episode)
+        genomes = sorted(
+            generation.get("genomes", []),
+            key=lambda item: float(item.get("fitness", 0.0)),
+            reverse=True,
+        )
+        top_genomes = []
+        for rank, genome in enumerate(genomes[: max(1, top_k)], start=1):
+            episode_pipes = genome.get("episode_pipes_passed", [genome.get("pipes_passed", 0)])
+            pipes_passed_max = max(episode_pipes) if episode_pipes else 0
+            pipes_passed_mean = float(genome.get("pipes_passed", 0.0))
+            top_genomes.append(
+                {
+                    "rank": rank,
+                    "fitness": float(genome.get("fitness", 0.0)),
+                    "pipes_passed_mean": pipes_passed_mean,
+                    "pipes_passed_max": pipes_passed_max,
+                    "genome_json": copy.deepcopy(genome.get("genome_json")),
+                }
+            )
+
+        payload["generations"].append(
+            {
+                "generation_index": generation_index,
+                "pipe_seed": pipe_seed,
+                "episode_index": eval_episode,
+                "genomes": top_genomes,
+            }
+        )
+
+    with output_path.open("w", encoding="utf-8") as file:
+        json.dump(payload, file, indent=2)
+    return output_path
+
+
 def replay_from_genome(genome_path: Path, config: SimulationConfig) -> tuple[dict[str, Any], dict[str, Any]]:
     genome_data, meta = load_genome_payload(genome_path)
     result = replay_genome(genome_data, config)
@@ -1087,6 +1198,9 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Replay the best genome and write web/simulation.json with fixed-dt frames",
     )
+    parser.add_argument("--export-web-evolution", action="store_true")
+    parser.add_argument("--web-top-k", type=int, default=20)
+    parser.add_argument("--web-eval-episode", type=int, default=0)
     parser.add_argument(
         "--flap-policy",
         choices=["probabilistic", "hysteresis", "deterministic"],
@@ -1198,6 +1312,17 @@ def main() -> None:
         web_path = Path(__file__).resolve().parent / "web" / "simulation.json"
         out_path = write_record_replay(replay_data["result"], generation_metadata, web_path)
         print(f"Saved record replay output: {out_path}")
+
+    if args.export_web_evolution:
+        web_evolution_path = Path(__file__).resolve().parent / "web" / "evolution.json"
+        out_path = write_web_evolution(
+            simulation_data=simulation_data,
+            config=config,
+            output_path=web_evolution_path,
+            top_k=max(1, args.web_top_k),
+            eval_episode=max(0, args.web_eval_episode),
+        )
+        print(f"Saved web evolution output: {out_path}")
 
     print(f"Saved simulation output: {output_path}")
     print(f"Saved run stats: {run_dir / 'stats.json'}")
