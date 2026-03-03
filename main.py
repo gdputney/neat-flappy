@@ -40,7 +40,7 @@ ABS_GAP_ERROR_CLAMP = 1.0
 class SimulationConfig:
     population_size: int = 100
     generations: int = 10
-    max_steps: int = 1000
+    max_steps: int = 5000
     world_width: float = 500.0
     world_height: float = 800.0
     pipe_spacing: float = 220.0
@@ -671,12 +671,24 @@ def evaluate_genome(
             simulate_genome(genome, config, pipe_rng_seed=pipe_seed, action_rng_seed=action_seed)
         )
 
-    mean_fitness = sum(result["fitness"] for result in episode_results) / len(episode_results)
+    episode_fitnesses = [result["fitness"] for result in episode_results]
+    episode_pipes_passed = [result["pipes_passed"] for result in episode_results]
+    mean_fitness = sum(episode_fitnesses) / len(episode_results)
+    mean_pipes_passed = sum(episode_pipes_passed) / len(episode_results)
     genome.fitness = mean_fitness
     representative = copy.deepcopy(max(episode_results, key=lambda result: result["fitness"]))
-    representative["episode_fitnesses"] = [result["fitness"] for result in episode_results]
-    representative["episode_pipes_passed"] = [result["pipes_passed"] for result in episode_results]
+    representative["episode_fitnesses"] = episode_fitnesses
+    representative["episode_pipes_passed"] = episode_pipes_passed
     representative["fitness"] = mean_fitness
+    representative["pipes_passed"] = mean_pipes_passed
+    representative["pipes_reward"] = sum(result["pipes_reward"] for result in episode_results) / len(episode_results)
+    representative["steps"] = sum(result["steps"] for result in episode_results) / len(episode_results)
+    representative["shaping_reward"] = (
+        sum(result["shaping_reward"] for result in episode_results) / len(episode_results)
+    )
+    representative["reached_first_pipe_bonus"] = (
+        sum(result["reached_first_pipe_bonus"] for result in episode_results) / len(episode_results)
+    )
     representative["eval_episodes"] = len(episode_results)
     return representative
 
@@ -716,13 +728,11 @@ def run_simulation(config: SimulationConfig) -> dict[str, Any]:
 
         fitnesses = [result["fitness"] for result in generation_results]
         steps_alive = [result["steps_alive"] for result in generation_results]
-        pipes_passed = [result["pipes_passed"] for result in generation_results]
         best_fitness = max(fitnesses)
         mean_fitness = sum(fitnesses) / len(fitnesses)
         median_fitness = median(fitnesses)
         best_steps = max(steps_alive)
-        best_pipes_passed = max(pipes_passed)
-        mean_pipes_passed = sum(pipes_passed) / len(pipes_passed)
+        mean_pipes_passed = sum(result["pipes_passed"] for result in generation_results) / len(generation_results)
         best_result = max(generation_results, key=lambda result: result["fitness"])
         best_episode_pipes_passed = best_result.get("episode_pipes_passed", [best_result.get("pipes_passed", 0)])
         best_episode_pipes_passed_max = max(best_episode_pipes_passed) if best_episode_pipes_passed else 0
@@ -731,6 +741,8 @@ def run_simulation(config: SimulationConfig) -> dict[str, Any]:
             if best_episode_pipes_passed
             else 0.0
         )
+        best_pipes_passed_mean = best_episode_pipes_passed_mean
+        best_pipes_passed_max = best_episode_pipes_passed_max
         best_avg_shaping_reward = best_result.get("average_shaping_reward", 0.0)
         best_avg_abs_gap_error = best_result.get("avg_abs_gap_error", 0.0)
         best_mean_proximity_weight = best_result.get("mean_proximity_weight", 0.0)
@@ -760,7 +772,9 @@ def run_simulation(config: SimulationConfig) -> dict[str, Any]:
             f"median={median_fitness:.2f} species={species_count} "
             f"threshold={threshold_used:.2f}->{next_threshold:.2f} "
             f"max_steps={config.max_steps} "
-            f"best_steps={best_steps} best_pipes_passed={best_pipes_passed} "
+            f"best_steps={best_steps} "
+            f"best_pipes_passed_mean={best_pipes_passed_mean:.2f} "
+            f"best_pipes_passed_max={best_pipes_passed_max} "
             f"mean_pipes_passed={mean_pipes_passed:.2f} "
             f"best_steps_component={best_steps_component:.2f} "
             f"best_pipes_reward={best_pipes_reward:.2f} "
@@ -785,7 +799,9 @@ def run_simulation(config: SimulationConfig) -> dict[str, Any]:
                 "compatibility_threshold": threshold_used,
                 "next_compatibility_threshold": next_threshold,
                 "best_steps": best_steps,
-                "best_pipes_passed": best_pipes_passed,
+                "best_pipes_passed": best_pipes_passed_max,
+                "best_pipes_passed_mean": best_pipes_passed_mean,
+                "best_pipes_passed_max": best_pipes_passed_max,
                 "mean_pipes_passed": mean_pipes_passed,
                 "best_steps_component": best_steps_component,
                 "best_pipes_reward": best_pipes_reward,
@@ -825,7 +841,12 @@ def write_stats(simulation_data: dict[str, Any], run_dir: Path, save_csv: bool) 
             "compatibility_threshold": generation.get("compatibility_threshold", 0.0),
             "next_compatibility_threshold": generation.get("next_compatibility_threshold", 0.0),
             "best_steps": generation.get("best_steps", 0),
-            "best_pipes_passed": generation.get("best_pipes_passed", 0),
+            "best_pipes_passed": generation.get(
+                "best_pipes_passed",
+                generation.get("best_pipes_passed_max", 0),
+            ),
+            "best_pipes_passed_mean": generation.get("best_pipes_passed_mean", 0.0),
+            "best_pipes_passed_max": generation.get("best_pipes_passed_max", generation.get("best_pipes_passed", 0)),
             "mean_pipes_passed": generation.get("mean_pipes_passed", 0.0),
             "best_steps_component": generation.get("best_steps_component", 0.0),
             "best_pipes_reward": generation.get("best_pipes_reward", 0.0),
@@ -867,7 +888,8 @@ def write_stats(simulation_data: dict[str, Any], run_dir: Path, save_csv: bool) 
                     "compatibility_threshold",
                     "next_compatibility_threshold",
                     "best_steps",
-                    "best_pipes_passed",
+                    "best_pipes_passed_mean",
+                    "best_pipes_passed_max",
                     "mean_pipes_passed",
                     "best_steps_component",
                     "best_pipes_reward",
