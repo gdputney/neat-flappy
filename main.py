@@ -152,6 +152,29 @@ def pipe_crossed_bird(previous_x: float, current_x: float, pipe_width: float, bi
     current_right_edge = current_x + pipe_width
     return previous_right_edge >= bird_x and current_right_edge < bird_x
 
+
+def adjust_next_pipe_index(next_pipe_index: int, removed_from_front: int) -> int:
+    """Shift next-pipe pointer left when off-screen pipes are dropped from the front."""
+    if removed_from_front <= 0:
+        return next_pipe_index
+    return max(0, next_pipe_index - removed_from_front)
+
+
+def count_passed_pipes(
+    pipes: list[Pipe],
+    bird_x: float,
+    next_pipe_index: int,
+    pipes_passed: int,
+) -> tuple[int, int]:
+    """Count newly passed pipes using an ordered next-pipe pointer."""
+    while next_pipe_index < len(pipes):
+        pipe = pipes[next_pipe_index]
+        if bird_x <= (pipe.x + pipe.width):
+            break
+        pipes_passed += 1
+        next_pipe_index += 1
+    return pipes_passed, next_pipe_index
+
 def normalized_gap_center_distance(bird: Bird, pipes: list[Pipe], world_height: float) -> float:
     """Return normalized abs distance from bird y to the next pipe ahead gap center."""
     if not pipes:
@@ -248,7 +271,7 @@ def simulate_genome(
     )
     first_pipe = Pipe(x=config.world_width + 120.0, world_height=config.world_height, rng=pipe_rng)
     pipes = [first_pipe]
-    passed_ids: set[int] = set()
+    next_pipe_index = 0
     frames: list[dict[str, Any]] = []
     alive = True
     steps = 0
@@ -291,13 +314,14 @@ def simulate_genome(
         if flap:
             flap = bird.jump()
 
-        previous_pipe_x = {id(pipe): pipe.x for pipe in pipes}
-
         bird.update_physics()
         for pipe in pipes:
             pipe.update()
 
+        pipe_count_before_trim = len(pipes)
         pipes = [pipe for pipe in pipes if (pipe.x + pipe.width) > -5]
+        removed_from_front = pipe_count_before_trim - len(pipes)
+        next_pipe_index = adjust_next_pipe_index(next_pipe_index, removed_from_front)
 
         if bird.y < 0:
             bird.y = 0
@@ -318,10 +342,12 @@ def simulate_genome(
                     death_reason = "hit_pipe"
                     death_bird_y = bird.y
                     death_bird_velocity = bird.velocity
-            previous_x = previous_pipe_x.get(id(pipe), pipe.x)
-            if pipe_crossed_bird(previous_x, pipe.x, pipe.width, bird.x) and id(pipe) not in passed_ids:
-                passed_ids.add(id(pipe))
-                pipes_passed += 1
+        pipes_passed, next_pipe_index = count_passed_pipes(
+            pipes=pipes,
+            bird_x=bird.x,
+            next_pipe_index=next_pipe_index,
+            pipes_passed=pipes_passed,
+        )
 
         if not reached_first_pipe and first_pipe.x <= bird.x:
             reached_first_pipe = True
@@ -440,7 +466,7 @@ def run_debug_one_episode(config: SimulationConfig, interval: int = 20) -> dict[
     )
     first_pipe = Pipe(x=config.world_width + 120.0, world_height=config.world_height)
     pipes = [first_pipe]
-    passed_ids: set[int] = set()
+    next_pipe_index = 0
     reached_first_pipe = False
     death_reason: str | None = None
     death_bird_y: float | None = None
@@ -489,12 +515,14 @@ def run_debug_one_episode(config: SimulationConfig, interval: int = 20) -> dict[
         if flap:
             flap = bird.jump()
 
-        previous_pipe_x = {id(pipe): pipe.x for pipe in pipes}
         bird.update_physics()
         for pipe in pipes:
             pipe.update()
 
+        pipe_count_before_trim = len(pipes)
         pipes = [pipe for pipe in pipes if (pipe.x + pipe.width) > -5]
+        removed_from_front = pipe_count_before_trim - len(pipes)
+        next_pipe_index = adjust_next_pipe_index(next_pipe_index, removed_from_front)
 
         if bird.y < 0:
             bird.y = 0
@@ -512,10 +540,12 @@ def run_debug_one_episode(config: SimulationConfig, interval: int = 20) -> dict[
                 death_reason = "hit_pipe"
                 death_bird_y = bird.y
                 death_bird_velocity = bird.velocity
-            previous_x = previous_pipe_x.get(id(pipe), pipe.x)
-            if pipe_crossed_bird(previous_x, pipe.x, pipe.width, bird.x) and id(pipe) not in passed_ids:
-                passed_ids.add(id(pipe))
-                pipes_passed += 1
+        pipes_passed, next_pipe_index = count_passed_pipes(
+            pipes=pipes,
+            bird_x=bird.x,
+            next_pipe_index=next_pipe_index,
+            pipes_passed=pipes_passed,
+        )
 
         if not reached_first_pipe and first_pipe.x <= bird.x:
             reached_first_pipe = True
