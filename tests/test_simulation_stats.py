@@ -28,6 +28,7 @@ from main import (
     normalized_gap_center_distance,
     bounded_gap_shaping,
     proximity_weight,
+    normalize_inputs,
 )
 
 
@@ -65,15 +66,19 @@ class SimulationStatsTests(unittest.TestCase):
             self.assertIn("best_steps", generation)
             self.assertIn("best_pipes_passed", generation)
             self.assertIn("mean_pipes_passed", generation)
-            self.assertIn("best_avg_shaping_penalty", generation)
+            self.assertIn("best_avg_shaping_reward", generation)
             self.assertIn("best_steps_component", generation)
             self.assertIn("best_pipes_reward", generation)
-            self.assertIn("best_shaping_penalty", generation)
+            self.assertIn("best_shaping_reward", generation)
             self.assertIn("best_reached_first_pipe_bonus", generation)
             self.assertIn("best_avg_abs_gap_error", generation)
             self.assertIn("best_mean_proximity_weight", generation)
             self.assertIn("best_episode_pipes_passed_max", generation)
             self.assertIn("best_episode_pipes_passed_mean", generation)
+            self.assertIn("best_hidden_nodes", generation)
+            self.assertIn("best_enabled_connections", generation)
+            self.assertIn("population_mean_hidden_nodes", generation)
+            self.assertIn("population_mean_enabled_connections", generation)
 
             genomes = generation["genomes"]
             self.assertEqual(generation["best_steps"], max(genome["steps_alive"] for genome in genomes))
@@ -88,12 +93,12 @@ class SimulationStatsTests(unittest.TestCase):
 
             best_genome_result = max(genomes, key=lambda genome: genome["fitness"])
             self.assertAlmostEqual(
-                generation["best_avg_shaping_penalty"],
-                best_genome_result.get("average_centering_penalty", 0.0),
+                generation["best_avg_shaping_reward"],
+                best_genome_result.get("average_shaping_reward", 0.0),
             )
             self.assertAlmostEqual(generation["best_steps_component"], best_genome_result.get("steps", 0.0))
             self.assertAlmostEqual(generation["best_pipes_reward"], best_genome_result.get("pipes_reward", 0.0))
-            self.assertAlmostEqual(generation["best_shaping_penalty"], best_genome_result.get("shaping_penalty", 0.0))
+            self.assertAlmostEqual(generation["best_shaping_reward"], best_genome_result.get("shaping_reward", 0.0))
             self.assertAlmostEqual(
                 generation["best_reached_first_pipe_bonus"],
                 best_genome_result.get("reached_first_pipe_bonus", 0.0),
@@ -108,6 +113,27 @@ class SimulationStatsTests(unittest.TestCase):
             )
 
 
+
+
+    def test_seeded_run_is_deterministic_for_first_five_generations(self) -> None:
+        config_a = SimulationConfig(generations=5, population_size=20, max_steps=60, seed=7, eval_episodes=2, deterministic_pipes=True, flap_policy="deterministic")
+        config_b = SimulationConfig(generations=5, population_size=20, max_steps=60, seed=7, eval_episodes=2, deterministic_pipes=True, flap_policy="deterministic")
+
+        run_a = run_simulation(config_a)
+        run_b = run_simulation(config_b)
+
+        fields = [
+            "best_fitness",
+            "mean_fitness",
+            "median_fitness",
+            "best_pipes_passed",
+            "best_hidden_nodes",
+            "best_enabled_connections",
+            "best_avg_abs_gap_error",
+        ]
+        for generation_a, generation_b in zip(run_a["generations"], run_b["generations"]):
+            for field in fields:
+                self.assertEqual(generation_a[field], generation_b[field])
 
     def test_eval_episodes_mean_fitness_is_used(self) -> None:
         config = SimulationConfig(max_steps=25, seed=8, eval_episodes=3)
@@ -272,6 +298,23 @@ class ShapingSignalTests(unittest.TestCase):
         self.assertAlmostEqual(proximity_weight(dx_to_next_pipe=110.0, ramp_distance=ramp), 0.5)
         self.assertEqual(proximity_weight(dx_to_next_pipe=0.0, ramp_distance=ramp), 1.0)
         self.assertEqual(proximity_weight(dx_to_next_pipe=-5.0, ramp_distance=ramp), 1.0)
+
+
+
+
+class InputNormalizationTests(unittest.TestCase):
+    def test_normalize_inputs_scales_values_to_unit_ranges(self) -> None:
+        config = SimulationConfig(world_width=500.0, world_height=800.0, velocity_min=-12.0, velocity_max=12.0)
+        bird = Bird(y=260.0, velocity=-6.0, x=100.0, world_width=500.0, world_height=800.0)
+        pipe = Pipe(x=220.0, world_height=800.0)
+        pipe.top = 200.0
+        pipe.bottom = 360.0
+
+        inputs = normalize_inputs(bird, [pipe], config)
+
+        self.assertEqual(len(inputs), 6)
+        self.assertTrue(all(-1.0 <= value <= 1.0 for value in inputs[:2] + inputs[3:]))
+        self.assertTrue(0.0 <= inputs[2] <= 1.0)
 
 
 class FlapPolicyTests(unittest.TestCase):

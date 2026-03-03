@@ -105,15 +105,21 @@ class Genome:
 
         return [values[int(node["id"])] for node in output_nodes]
 
-    def mutate(self, tracker: InnovationTracker | None = None) -> None:
+    def mutate(
+        self,
+        tracker: InnovationTracker | None = None,
+        toggle_connection_prob: float = 0.03,
+        add_connection_prob: float = 0.3,
+        add_node_prob: float = 0.18,
+    ) -> None:
         """Apply NEAT mutations: weights, add-node, add-connection, enable/disable toggle."""
         self._perturb_connection_weights()
 
-        if random.random() < 0.05:
+        if random.random() < toggle_connection_prob:
             self._toggle_connection_enabled()
-        if random.random() < 0.2:
+        if random.random() < add_connection_prob:
             self._add_connection_mutation(tracker)
-        if random.random() < 0.1:
+        if random.random() < add_node_prob:
             self._add_node_mutation(tracker)
 
     def _perturb_connection_weights(self, sigma: float = 0.3, reset_chance: float = 0.1) -> None:

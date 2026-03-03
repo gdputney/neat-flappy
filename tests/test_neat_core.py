@@ -76,6 +76,42 @@ class NeatCycleSafetyTests(unittest.TestCase):
                     msg=f"Toggle produced cycle-closing edge: {gene}",
                 )
 
+
+    def test_mutate_can_add_connection_when_probability_is_high(self) -> None:
+        tracker = InnovationTracker(next_innovation=2)
+        genome = self._base_genome()
+        genome.node_genes.append({"id": 3, "type": "hidden", "bias": 0.0})
+        before = len(genome.connection_genes)
+
+        for _ in range(20):
+            genome.mutate(
+                tracker,
+                toggle_connection_prob=0.0,
+                add_connection_prob=1.0,
+                add_node_prob=0.0,
+            )
+            if len(genome.connection_genes) > before:
+                break
+
+        self.assertGreater(len(genome.connection_genes), before)
+
+    def test_mutate_can_add_node_when_probability_is_high(self) -> None:
+        tracker = InnovationTracker(next_innovation=2)
+        genome = self._base_genome()
+        before = len(genome.node_genes)
+
+        for _ in range(20):
+            genome.mutate(
+                tracker,
+                toggle_connection_prob=0.0,
+                add_connection_prob=0.0,
+                add_node_prob=1.0,
+            )
+            if len(genome.node_genes) > before:
+                break
+
+        self.assertGreater(len(genome.node_genes), before)
+
     def test_mutate_never_produces_cyclic_enabled_graph(self) -> None:
         tracker = InnovationTracker(next_innovation=5)
         genome = self._base_genome()
