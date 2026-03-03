@@ -30,6 +30,10 @@ VEL_MIN = -12.0
 VEL_MAX = 12.0
 CEILING_TOUCH_PENALTY = 200.0
 ALIVE_BONUS_AFTER_FIRST_PIPE = 0.2
+CENTERING_REWARD_SCALE = 1.0
+PROGRESS_REWARD_SCALE = 0.6
+PROGRESS_REWARD_CLAMP = 0.15
+ABS_GAP_ERROR_CLAMP = 1.0
 
 
 @dataclass
@@ -57,6 +61,15 @@ class SimulationConfig:
     velocity_max: float = VEL_MAX
     ceiling_touch_penalty: float = CEILING_TOUCH_PENALTY
     alive_bonus_after_first_pipe: float = ALIVE_BONUS_AFTER_FIRST_PIPE
+    centering_reward_scale: float = CENTERING_REWARD_SCALE
+    progress_reward_scale: float = PROGRESS_REWARD_SCALE
+    progress_reward_clamp: float = PROGRESS_REWARD_CLAMP
+    abs_gap_error_clamp: float = ABS_GAP_ERROR_CLAMP
+    enable_centering_reward: bool = True
+    enable_progress_reward: bool = True
+    mutation_toggle_connection_prob: float = 0.03
+    mutation_add_connection_prob: float = 0.3
+    mutation_add_node_prob: float = 0.18
     debug_no_flap: bool = False
     debug_always_flap: bool = False
 
@@ -170,6 +183,53 @@ def bounded_gap_shaping(abs_gap_error: float) -> float:
     return clipped_error * clipped_error
 
 
+def clamp(value: float, low: float, high: float) -> float:
+    return max(low, min(high, value))
+
+
+def normalize_inputs(bird: Bird, pipes: list[Pipe], config: SimulationConfig) -> list[float]:
+    """Build normalized NN inputs in stable ranges.
+
+    Layout:
+      1) bird y centered to [-1, 1]
+      2) bird velocity normalized by max abs velocity to [-1, 1]
+      3) horizontal distance to next pipe in [0, 1]
+      4) gap-center error normalized by half-gap to [-1, 1]
+      5) delta to gap top normalized by world height to [-1, 1]
+      6) delta to gap bottom normalized by world height to [-1, 1]
+    """
+    height = config.world_height if config.world_height > 0 else 1.0
+    width = config.world_width if config.world_width > 0 else 1.0
+    max_abs_velocity = max(abs(config.velocity_min), abs(config.velocity_max), 1e-6)
+
+    ahead_pipes = [pipe for pipe in pipes if (pipe.x + pipe.width) >= bird.x]
+    next_pipe = min(ahead_pipes, key=lambda pipe: pipe.x) if ahead_pipes else None
+
+    y_norm = clamp((2.0 * (bird.y / height)) - 1.0, -1.0, 1.0)
+    velocity_norm = clamp(bird.velocity / max_abs_velocity, -1.0, 1.0)
+
+    if next_pipe is None:
+        return [y_norm, velocity_norm, 1.0, 0.0, 0.0, 0.0]
+
+    gap_center = (next_pipe.top + next_pipe.bottom) / 2.0
+    half_gap_height = max((next_pipe.bottom - next_pipe.top) / 2.0, 1e-6)
+    dx_to_next_pipe = next_pipe.x - bird.x
+
+    dx_norm = clamp(dx_to_next_pipe / width, 0.0, 1.0)
+    gap_error_norm = clamp((bird.y - gap_center) / half_gap_height, -1.0, 1.0)
+    dy_top_norm = clamp((next_pipe.top - bird.y) / height, -1.0, 1.0)
+    dy_bottom_norm = clamp((next_pipe.bottom - bird.y) / height, -1.0, 1.0)
+    return [y_norm, velocity_norm, dx_norm, gap_error_norm, dy_top_norm, dy_bottom_norm]
+
+
+def hidden_node_count(genome: Genome) -> int:
+    return sum(1 for node in genome.node_genes if node.get("type") == "hidden")
+
+
+def enabled_connection_count(genome: Genome) -> int:
+    return sum(1 for conn in genome.connection_genes if conn.get("enabled", True))
+
+
 def simulate_genome(
     genome: Genome,
     config: SimulationConfig,
@@ -194,8 +254,8 @@ def simulate_genome(
     steps = 0
     pipes_passed = 0
     crashed = False
-    centering_penalty = 0.0
-    average_centering_penalty = 0.0
+    shaping_reward_total = 0.0
+    average_shaping_reward = 0.0
     is_flapping = False
     reached_first_pipe = False
     alive_bonus = 0.0
@@ -207,12 +267,13 @@ def simulate_genome(
     abs_gap_error_count = 0
     proximity_weight_sum = 0.0
     proximity_weight_count = 0
+    previous_abs_gap_error_norm: float | None = None
 
     while alive and steps < config.max_steps:
         if pipes[-1].x < config.world_width - config.pipe_spacing:
             pipes.append(Pipe(x=config.world_width + 50.0, world_height=config.world_height, rng=pipe_rng))
 
-        inputs = bird.get_inputs(pipes)
+        inputs = normalize_inputs(bird, pipes, config)
         output = genome.activate(inputs)[0]
         flap = decide_flap(
             output,
@@ -273,16 +334,27 @@ def simulate_genome(
             abs_gap_error = abs(bird.y - gap_center) / half_gap_height
             dx_to_next_pipe = next_pipe.x - bird.x
             proximity = proximity_weight(dx_to_next_pipe=dx_to_next_pipe, ramp_distance=config.pipe_spacing)
-            centering_penalty += (
-                FITNESS_CENTERING_PENALTY_SCALE
-                * bounded_gap_shaping(abs_gap_error)
-                * proximity
+            clamped_abs_gap_error = clamp(abs_gap_error, 0.0, config.abs_gap_error_clamp)
+            normalized_abs_gap_error = clamp(
+                clamped_abs_gap_error / max(config.abs_gap_error_clamp, 1e-6),
+                0.0,
+                1.0,
             )
+
+            if config.enable_centering_reward:
+                shaping_reward_total += (
+                    config.centering_reward_scale * (1.0 - normalized_abs_gap_error) * proximity
+                )
+            if config.enable_progress_reward and previous_abs_gap_error_norm is not None:
+                progress = previous_abs_gap_error_norm - normalized_abs_gap_error
+                progress = clamp(progress, -config.progress_reward_clamp, config.progress_reward_clamp)
+                shaping_reward_total += config.progress_reward_scale * progress * proximity
+
+            previous_abs_gap_error_norm = normalized_abs_gap_error
             proximity_weight_sum += proximity
             proximity_weight_count += 1
-            if reached_first_pipe:
-                abs_gap_error_sum += abs_gap_error
-                abs_gap_error_count += 1
+            abs_gap_error_sum += normalized_abs_gap_error
+            abs_gap_error_count += 1
 
         if reached_first_pipe:
             alive_bonus += config.alive_bonus_after_first_pipe
@@ -315,9 +387,9 @@ def simulate_genome(
     steps_survived = float(steps)
     pipes_reward = float(pipes_passed * 5000.0)
     reached_first_pipe_bonus = FIRST_PIPE_REACHED_BONUS if reached_first_pipe else 0.0
-    shaping_penalty = centering_penalty * config.shaping_weight * config.shaping_scale
+    shaping_reward = shaping_reward_total * config.shaping_weight * config.shaping_scale
     ceiling_penalty = ceiling_touches * config.ceiling_touch_penalty
-    average_centering_penalty = (centering_penalty / steps_survived) if steps_survived > 0 else 0.0
+    average_shaping_reward = (shaping_reward_total / steps_survived) if steps_survived > 0 else 0.0
     avg_abs_gap_error = (abs_gap_error_sum / abs_gap_error_count) if abs_gap_error_count > 0 else 0.0
     mean_proximity_weight = (proximity_weight_sum / proximity_weight_count) if proximity_weight_count > 0 else 0.0
     genome.fitness = (
@@ -325,7 +397,7 @@ def simulate_genome(
         + pipes_reward
         + reached_first_pipe_bonus
         + alive_bonus
-        - shaping_penalty
+        + shaping_reward
         - ceiling_penalty
     )
     return {
@@ -334,15 +406,15 @@ def simulate_genome(
         "pipes_passed": pipes_passed,
         "steps": steps_survived,
         "pipes_reward": pipes_reward,
-        "shaping_penalty": shaping_penalty,
+        "shaping_reward": shaping_reward,
         "ceiling_penalty": ceiling_penalty,
         "ceiling_touches": ceiling_touches,
         "reached_first_pipe_bonus": reached_first_pipe_bonus,
         "alive_bonus": alive_bonus,
         "frames": frames,
         "crashed": crashed,
-        "centering_penalty": centering_penalty,
-        "average_centering_penalty": average_centering_penalty,
+        "shaping_reward_total": shaping_reward_total,
+        "average_shaping_reward": average_shaping_reward,
         "avg_abs_gap_error": avg_abs_gap_error,
         "mean_proximity_weight": mean_proximity_weight,
         "death_reason": death_reason,
@@ -400,7 +472,7 @@ def run_debug_one_episode(config: SimulationConfig, interval: int = 20) -> dict[
                 f"pipes_passed={pipes_passed}"
             )
 
-        inputs = bird.get_inputs(pipes)
+        inputs = normalize_inputs(bird, pipes, config)
         output = genome.activate(inputs)[0]
         flap = decide_flap(
             output,
@@ -540,7 +612,12 @@ def evolve_population(population: list[Genome], tracker: InnovationTracker, conf
             parent_a = random.choice(selection_pool)
             parent_b = random.choice(selection_pool)
             child = parent_a.crossover(parent_b)
-            child.mutate(tracker)
+            child.mutate(
+                tracker,
+                toggle_connection_prob=config.mutation_toggle_connection_prob,
+                add_connection_prob=config.mutation_add_connection_prob,
+                add_node_prob=config.mutation_add_node_prob,
+            )
             next_population.append(child)
             generated_non_elites += 1
 
@@ -548,7 +625,12 @@ def evolve_population(population: list[Genome], tracker: InnovationTracker, conf
         parent = random.choice(population)
         child = copy.deepcopy(parent)
         child.fitness = 0.0
-        child.mutate(tracker)
+        child.mutate(
+            tracker,
+            toggle_connection_prob=config.mutation_toggle_connection_prob,
+            add_connection_prob=config.mutation_add_connection_prob,
+            add_node_prob=config.mutation_add_node_prob,
+        )
         next_population.append(child)
 
     return next_population[: len(population)]
@@ -649,13 +731,19 @@ def run_simulation(config: SimulationConfig) -> dict[str, Any]:
             if best_episode_pipes_passed
             else 0.0
         )
-        best_avg_shaping_penalty = best_result.get("average_centering_penalty", 0.0)
+        best_avg_shaping_reward = best_result.get("average_shaping_reward", 0.0)
         best_avg_abs_gap_error = best_result.get("avg_abs_gap_error", 0.0)
         best_mean_proximity_weight = best_result.get("mean_proximity_weight", 0.0)
         best_steps_component = best_result.get("steps", 0.0)
         best_pipes_reward = best_result.get("pipes_reward", 0.0)
-        best_shaping_penalty = best_result.get("shaping_penalty", 0.0)
+        best_shaping_reward = best_result.get("shaping_reward", 0.0)
         best_first_pipe_bonus = best_result.get("reached_first_pipe_bonus", 0.0)
+        population_mean_hidden_nodes = sum(hidden_node_count(genome) for genome in population) / len(population)
+        population_mean_enabled_connections = (
+            sum(enabled_connection_count(genome) for genome in population) / len(population)
+        )
+        best_hidden_nodes = hidden_node_count(population[best_result["genome_index"]])
+        best_enabled_connections = enabled_connection_count(population[best_result["genome_index"]])
         species_count = len(speciate_population(population, config.compatibility_threshold))
         threshold_used = config.compatibility_threshold
         next_threshold = adjust_compatibility_threshold(
@@ -676,11 +764,15 @@ def run_simulation(config: SimulationConfig) -> dict[str, Any]:
             f"mean_pipes_passed={mean_pipes_passed:.2f} "
             f"best_steps_component={best_steps_component:.2f} "
             f"best_pipes_reward={best_pipes_reward:.2f} "
-            f"best_shaping_penalty={best_shaping_penalty:.2f} "
+            f"best_shaping_reward={best_shaping_reward:.2f} "
             f"best_reached_first_pipe_bonus={best_first_pipe_bonus:.2f} "
-            f"best_avg_shaping_penalty={best_avg_shaping_penalty:.3f} "
+            f"best_avg_shaping_reward={best_avg_shaping_reward:.3f} "
             f"best_avg_abs_gap_error={best_avg_abs_gap_error:.3f} "
-            f"best_mean_proximity_weight={best_mean_proximity_weight:.3f}"
+            f"best_mean_proximity_weight={best_mean_proximity_weight:.3f} "
+            f"mean_hidden_nodes={population_mean_hidden_nodes:.2f} "
+            f"mean_enabled_connections={population_mean_enabled_connections:.2f} "
+            f"champ_hidden_nodes={best_hidden_nodes} "
+            f"champ_enabled_connections={best_enabled_connections}"
         )
 
         output["generations"].append(
@@ -697,13 +789,17 @@ def run_simulation(config: SimulationConfig) -> dict[str, Any]:
                 "mean_pipes_passed": mean_pipes_passed,
                 "best_steps_component": best_steps_component,
                 "best_pipes_reward": best_pipes_reward,
-                "best_shaping_penalty": best_shaping_penalty,
+                "best_shaping_reward": best_shaping_reward,
                 "best_reached_first_pipe_bonus": best_first_pipe_bonus,
-                "best_avg_shaping_penalty": best_avg_shaping_penalty,
+                "best_avg_shaping_reward": best_avg_shaping_reward,
                 "best_avg_abs_gap_error": best_avg_abs_gap_error,
                 "best_mean_proximity_weight": best_mean_proximity_weight,
                 "best_episode_pipes_passed_max": best_episode_pipes_passed_max,
                 "best_episode_pipes_passed_mean": best_episode_pipes_passed_mean,
+                "best_hidden_nodes": best_hidden_nodes,
+                "best_enabled_connections": best_enabled_connections,
+                "population_mean_hidden_nodes": population_mean_hidden_nodes,
+                "population_mean_enabled_connections": population_mean_enabled_connections,
                 "genomes": generation_results,
             }
         )
@@ -733,13 +829,17 @@ def write_stats(simulation_data: dict[str, Any], run_dir: Path, save_csv: bool) 
             "mean_pipes_passed": generation.get("mean_pipes_passed", 0.0),
             "best_steps_component": generation.get("best_steps_component", 0.0),
             "best_pipes_reward": generation.get("best_pipes_reward", 0.0),
-            "best_shaping_penalty": generation.get("best_shaping_penalty", 0.0),
+            "best_shaping_reward": generation.get("best_shaping_reward", 0.0),
             "best_reached_first_pipe_bonus": generation.get("best_reached_first_pipe_bonus", 0.0),
-            "best_avg_shaping_penalty": generation.get("best_avg_shaping_penalty", 0.0),
+            "best_avg_shaping_reward": generation.get("best_avg_shaping_reward", 0.0),
             "best_avg_abs_gap_error": generation.get("best_avg_abs_gap_error", 0.0),
             "best_mean_proximity_weight": generation.get("best_mean_proximity_weight", 0.0),
             "best_episode_pipes_passed_max": generation.get("best_episode_pipes_passed_max", 0),
             "best_episode_pipes_passed_mean": generation.get("best_episode_pipes_passed_mean", 0.0),
+            "best_hidden_nodes": generation.get("best_hidden_nodes", 0),
+            "best_enabled_connections": generation.get("best_enabled_connections", 0),
+            "population_mean_hidden_nodes": generation.get("population_mean_hidden_nodes", 0.0),
+            "population_mean_enabled_connections": generation.get("population_mean_enabled_connections", 0.0),
         }
         for generation in simulation_data["generations"]
     ]
@@ -771,13 +871,17 @@ def write_stats(simulation_data: dict[str, Any], run_dir: Path, save_csv: bool) 
                     "mean_pipes_passed",
                     "best_steps_component",
                     "best_pipes_reward",
-                    "best_shaping_penalty",
+                    "best_shaping_reward",
                     "best_reached_first_pipe_bonus",
-                    "best_avg_shaping_penalty",
+                    "best_avg_shaping_reward",
                     "best_avg_abs_gap_error",
                     "best_mean_proximity_weight",
                     "best_episode_pipes_passed_max",
                     "best_episode_pipes_passed_mean",
+                    "best_hidden_nodes",
+                    "best_enabled_connections",
+                    "population_mean_hidden_nodes",
+                    "population_mean_enabled_connections",
                 ],
             )
             writer.writeheader()
@@ -964,6 +1068,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--vel-min", type=float, default=VEL_MIN)
     parser.add_argument("--vel-max", type=float, default=VEL_MAX)
     parser.add_argument("--ceiling-touch-penalty", type=float, default=CEILING_TOUCH_PENALTY)
+    parser.add_argument("--centering-reward-scale", type=float, default=CENTERING_REWARD_SCALE)
+    parser.add_argument("--progress-reward-scale", type=float, default=PROGRESS_REWARD_SCALE)
+    parser.add_argument("--progress-reward-clamp", type=float, default=PROGRESS_REWARD_CLAMP)
+    parser.add_argument("--abs-gap-error-clamp", type=float, default=ABS_GAP_ERROR_CLAMP)
+    parser.add_argument("--disable-centering-reward", action="store_true")
+    parser.add_argument("--disable-progress-reward", action="store_true")
+    parser.add_argument("--mutation-toggle-connection-prob", type=float, default=SimulationConfig.mutation_toggle_connection_prob)
+    parser.add_argument("--mutation-add-connection-prob", type=float, default=SimulationConfig.mutation_add_connection_prob)
+    parser.add_argument("--mutation-add-node-prob", type=float, default=SimulationConfig.mutation_add_node_prob)
     parser.add_argument(
         "--debug-one",
         action="store_true",
@@ -991,6 +1104,15 @@ def main() -> None:
         population_size=max(2, args.population_size),
         target_species=max(1, args.target_species),
         compatibility_adjust_step=max(0.0, args.compatibility_adjust_step),
+        centering_reward_scale=max(0.0, args.centering_reward_scale),
+        progress_reward_scale=max(0.0, args.progress_reward_scale),
+        progress_reward_clamp=max(0.0, args.progress_reward_clamp),
+        abs_gap_error_clamp=max(1e-6, args.abs_gap_error_clamp),
+        enable_centering_reward=not args.disable_centering_reward,
+        enable_progress_reward=not args.disable_progress_reward,
+        mutation_toggle_connection_prob=clamp(args.mutation_toggle_connection_prob, 0.0, 1.0),
+        mutation_add_connection_prob=clamp(args.mutation_add_connection_prob, 0.0, 1.0),
+        mutation_add_node_prob=clamp(args.mutation_add_node_prob, 0.0, 1.0),
         debug_no_flap=args.debug_no_flap,
         debug_always_flap=args.debug_always_flap,
     )
