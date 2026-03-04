@@ -2,19 +2,28 @@
   const canvas = document.getElementById("simCanvas");
   const ctx = canvas.getContext("2d");
   const playPauseBtn = document.getElementById("playPauseBtn");
+  const prevGenBtn = document.getElementById("prevGenBtn");
+  const nextGenBtn = document.getElementById("nextGenBtn");
   const generationSlider = document.getElementById("generationSlider");
-  const generationValue = document.getElementById("generationValue");
-  const generationMax = document.getElementById("generationMax");
   const speedSlider = document.getElementById("speedSlider");
-  const speedValue = document.getElementById("speedValue");
   const trailToggle = document.getElementById("trailToggle");
+  const championOnlyToggle = document.getElementById("championOnlyToggle");
+  const debugToggle = document.getElementById("debugToggle");
   const statusEl = document.getElementById("status");
   const rankingList = document.getElementById("rankingList");
+  const speciesLegend = document.getElementById("speciesLegend");
+
+  const statGeneration = document.getElementById("statGeneration");
+  const statBirdsShown = document.getElementById("statBirdsShown");
+  const statAlive = document.getElementById("statAlive");
+  const statBestGen = document.getElementById("statBestGen");
+  const statBestAll = document.getElementById("statBestAll");
+  const statPlayback = document.getElementById("statPlayback");
+  const statSeed = document.getElementById("statSeed");
 
   const state = {
     data: null,
     generationIndex: 0,
-    speed: 1,
     playing: true,
     stepAccumulator: 0,
     lastTimestamp: 0,
@@ -26,8 +35,20 @@
     pipeRngState: 1,
     bestScore: 0,
     showTrails: false,
+    showChampionOnly: false,
+    showDebug: false,
     trailHistory: [],
     step: 0,
+    autoplayIntervalMs: 1500,
+    autoplayElapsedMs: 0,
+    bestPipesAllTime: 0,
+    renderTimeMs: 0,
+    clouds: [
+      { x: 30, y: 72, speed: 4, scale: 1.0, alpha: 0.2 },
+      { x: 200, y: 120, speed: 7, scale: 1.35, alpha: 0.17 },
+      { x: 390, y: 56, speed: 6, scale: 0.9, alpha: 0.22 },
+      { x: 140, y: 190, speed: 5, scale: 1.15, alpha: 0.14 },
+    ],
   };
 
   function setStatus(text) {
@@ -151,6 +172,48 @@
     };
   }
 
+  function computeBestPipesAllTime(data) {
+    return data.generations.reduce((bestGen, generation) => {
+      const genBest = (generation.genomes || []).reduce((bestGenome, genome) => {
+        return Math.max(bestGenome, Number(genome.pipes_passed_max || 0));
+      }, 0);
+      return Math.max(bestGen, genBest);
+    }, 0);
+  }
+
+  function getSpeciesColor(speciesId) {
+    const sid = Number.isFinite(Number(speciesId)) ? Number(speciesId) : 0;
+    const palette = [
+      "hsl(0 80% 57%)",
+      "hsl(36 82% 56%)",
+      "hsl(85 70% 50%)",
+      "hsl(133 62% 46%)",
+      "hsl(170 68% 45%)",
+      "hsl(210 78% 56%)",
+      "hsl(252 78% 63%)",
+      "hsl(289 67% 58%)",
+      "hsl(325 76% 58%)",
+      "hsl(18 72% 54%)",
+    ];
+    if (sid <= 0) return "hsla(0, 0%, 80%, 0.72)";
+    const idx = (sid - 1) % palette.length;
+    if (sid <= palette.length) return palette[idx].replace(")", " / 0.72)").replace("hsl(", "hsla(");
+    const hue = (sid * 137.508) % 360;
+    return `hsla(${hue.toFixed(1)}, 72%, 56%, 0.72)`;
+  }
+
+  function getChampionPipes(generation) {
+    const champ = (generation.genomes || []).find((entry) => Number(entry.rank) === 1) || generation.genomes?.[0];
+    return Number(champ?.pipes_passed_max || 0);
+  }
+
+  function advanceGeneration(delta) {
+    if (!state.data) return;
+    const total = state.data.generations.length;
+    const next = (state.generationIndex + delta + total) % total;
+    loadGeneration(next);
+  }
+
   function loadGeneration(generationIdx) {
     const generation = state.data.generations[generationIdx];
     const config = state.data.metadata.config;
@@ -163,32 +226,147 @@
     state.simEnded = false;
     state.bestScore = 0;
     state.stepAccumulator = 0;
+    state.autoplayElapsedMs = 0;
     state.pipes = [createPipe(rng, config.first_pipe_x, config)];
-    state.birds = generation.genomes.map((entry, i) => ({
-      rank: entry.rank,
-      genomeJson: entry.genome_json,
-      y: config.bird_start_y,
-      velocity: 0,
-      flapCooldown: 0,
-      isFlapping: false,
-      alive: true,
-      score: 0,
-      color: `hsla(${Math.round((i * 360) / Math.max(1, generation.genomes.length))}, 85%, 52%, 0.65)`,
-    }));
+    state.birds = generation.genomes.map((entry) => {
+      const speciesId = Number(entry.species_id ?? 0);
+      return {
+        rank: entry.rank,
+        speciesId,
+        genomeJson: entry.genome_json,
+        y: config.bird_start_y,
+        velocity: 0,
+        flapCooldown: 0,
+        isFlapping: false,
+        alive: true,
+        score: 0,
+        color: getSpeciesColor(speciesId),
+      };
+    });
     state.nextPipeIndexPerBird = state.birds.map(() => 0);
     state.trailHistory = state.birds.map(() => []);
     state.pipeRngState = rng;
     generationSlider.value = String(generationIdx);
-    generationValue.textContent = String(generationIdx);
     render();
   }
 
-  function stepSimulation() {
-    const generation = state.data.generations[state.generationIndex];
-    const config = state.data.metadata.config;
-    if (state.simEnded) {
-      return;
+  function drawBackground() {
+    const sky = ctx.createLinearGradient(0, 0, 0, canvas.height);
+    sky.addColorStop(0, "#7bc8ff");
+    sky.addColorStop(0.55, "#8dd8ff");
+    sky.addColorStop(1, "#c6f0ff");
+    ctx.fillStyle = sky;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    const timeSeconds = state.renderTimeMs / 1000;
+    for (let i = 0; i < state.clouds.length; i += 1) {
+      const cloud = state.clouds[i];
+      const x = (cloud.x + (timeSeconds * cloud.speed)) % (canvas.width + 140) - 70;
+      const y = cloud.y;
+      const radius = 16 * cloud.scale;
+      ctx.fillStyle = `rgba(255,255,255,${cloud.alpha})`;
+      ctx.beginPath();
+      ctx.arc(x, y, radius, 0, Math.PI * 2);
+      ctx.arc(x + radius * 0.85, y - radius * 0.2, radius * 0.8, 0, Math.PI * 2);
+      ctx.arc(x + radius * 1.6, y, radius * 0.95, 0, Math.PI * 2);
+      ctx.fill();
     }
+
+    const groundHeight = 34;
+    const dirt = ctx.createLinearGradient(0, canvas.height - groundHeight, 0, canvas.height);
+    dirt.addColorStop(0, "#ab7a36");
+    dirt.addColorStop(1, "#7f5522");
+    ctx.fillStyle = "#79b84f";
+    ctx.fillRect(0, canvas.height - groundHeight - 8, canvas.width, 8);
+    ctx.fillStyle = dirt;
+    ctx.fillRect(0, canvas.height - groundHeight, canvas.width, groundHeight);
+  }
+
+  function drawPipe(pipe, pipeIndex) {
+    const border = 4;
+    const capHeight = 12;
+    const capOverhang = 6;
+
+    const drawSegment = (x, y, width, height) => {
+      ctx.fillStyle = "#2f6f25";
+      ctx.fillRect(x, y, width, height);
+      ctx.fillStyle = "#4ea53f";
+      ctx.fillRect(x + border, y + border, Math.max(0, width - (2 * border)), Math.max(0, height - (2 * border)));
+      ctx.fillStyle = "rgba(255,255,255,0.10)";
+      ctx.fillRect(x + border + 2, y + border, 4, Math.max(0, height - (2 * border)));
+    };
+
+    drawSegment(pipe.x, 0, pipe.width, pipe.top);
+    drawSegment(pipe.x, pipe.bottom, pipe.width, canvas.height - pipe.bottom);
+
+    ctx.fillStyle = "#2f6f25";
+    ctx.fillRect(pipe.x - capOverhang, pipe.top - capHeight, pipe.width + (2 * capOverhang), capHeight);
+    ctx.fillRect(pipe.x - capOverhang, pipe.bottom, pipe.width + (2 * capOverhang), capHeight);
+    ctx.fillStyle = "#5cbf4c";
+    ctx.fillRect(pipe.x - capOverhang + 2, pipe.top - capHeight + 2, pipe.width + (2 * capOverhang) - 4, capHeight - 4);
+    ctx.fillRect(pipe.x - capOverhang + 2, pipe.bottom + 2, pipe.width + (2 * capOverhang) - 4, capHeight - 4);
+
+    if (state.showDebug) {
+      ctx.fillStyle = "rgba(0,0,0,0.7)";
+      ctx.font = "12px monospace";
+      ctx.fillText(`#${pipeIndex}`, pipe.x + 4, Math.max(14, pipe.top - 4));
+    }
+  }
+
+  function drawBird(bird, birdIndex, config) {
+    const x = config.bird_x;
+    const y = bird.y;
+    const angle = clamp(bird.velocity * 0.11, -0.65, 0.75);
+    const flapPhase = (state.renderTimeMs / 100) + (birdIndex * 0.25);
+    const wingLift = bird.isFlapping ? Math.sin(flapPhase) * 4 : 0;
+
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(angle);
+
+    ctx.shadowColor = "rgba(0,0,0,0.24)";
+    ctx.shadowBlur = 6;
+    ctx.shadowOffsetY = 2;
+
+    ctx.fillStyle = bird.color;
+    ctx.beginPath();
+    ctx.moveTo(12, 0);
+    ctx.quadraticCurveTo(5, -8, -8, -6);
+    ctx.quadraticCurveTo(-12, 0, -8, 6);
+    ctx.quadraticCurveTo(5, 8, 12, 0);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = "rgba(0,0,0,0.3)";
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+
+    ctx.strokeStyle = "rgba(255,255,255,0.55)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(-2, -1);
+    ctx.lineTo(-9, -5 - wingLift);
+    ctx.stroke();
+
+    ctx.fillStyle = "#fff";
+    ctx.beginPath();
+    ctx.arc(5, -2, 1.8, 0, Math.PI * 2);
+    ctx.fill();
+
+    if (bird.rank === 1) {
+      ctx.strokeStyle = "#ffd54f";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(0, 0, 13, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  function stepSimulation() {
+    const config = state.data.metadata.config;
+    if (state.simEnded) return;
 
     if (state.pipes[state.pipes.length - 1].x < config.world_width - config.pipe_spacing) {
       state.pipes.push(createPipe(state.pipeRngState, config.new_pipe_x, config));
@@ -200,12 +378,10 @@
 
       const inputs = normalizeInputs(bird, state.pipes, config);
       const output = activateGenome(bird.genomeJson, inputs)[0] || 0;
-      let flap = decideFlap(output, state.data.metadata.flap_policy, bird.isFlapping, config);
+      const flap = decideFlap(output, state.data.metadata.flap_policy, bird.isFlapping, config);
       bird.isFlapping = flap;
 
-      if (bird.flapCooldown > 0) {
-        bird.flapCooldown -= 1;
-      }
+      if (bird.flapCooldown > 0) bird.flapCooldown -= 1;
       if (flap && bird.flapCooldown === 0) {
         bird.velocity = config.jump_strength;
         bird.flapCooldown = config.flap_cooldown_frames;
@@ -231,9 +407,7 @@
 
       while (state.nextPipeIndexPerBird[i] < state.pipes.length) {
         const pipe = state.pipes[state.nextPipeIndexPerBird[i]];
-        if (config.bird_x <= (pipe.x + pipe.width)) {
-          break;
-        }
+        if (config.bird_x <= (pipe.x + pipe.width)) break;
         bird.score += 1;
         state.nextPipeIndexPerBird[i] += 1;
       }
@@ -261,11 +435,40 @@
     const aliveCount = state.birds.filter((bird) => bird.alive).length;
     if (aliveCount === 0 || state.step >= state.maxSteps) {
       state.simEnded = true;
-      if (state.playing) {
-        const next = (state.generationIndex + 1) % state.data.generations.length;
-        loadGeneration(next);
-      }
     }
+  }
+
+  function updateStats(generation) {
+    const total = state.data.generations.length;
+    const visibleBirds = state.showChampionOnly ? Math.min(state.birds.length, 1) : state.birds.length;
+    const alive = state.birds.filter((bird) => bird.alive).length;
+    statGeneration.textContent = `${state.generationIndex + 1} / ${total}`;
+    statBirdsShown.textContent = String(visibleBirds);
+    statAlive.textContent = `${alive} / ${state.birds.length}`;
+    statBestGen.textContent = String(getChampionPipes(generation));
+    statBestAll.textContent = String(state.bestPipesAllTime);
+    statPlayback.textContent = `${state.autoplayIntervalMs} ms/gen`;
+    statSeed.textContent = String(generation.pipe_seed);
+  }
+
+  function renderSpeciesLegend() {
+    if (!speciesLegend) return;
+    const aliveCounts = new Map();
+    for (let i = 0; i < state.birds.length; i += 1) {
+      const bird = state.birds[i];
+      const sid = Number(bird.speciesId || 0);
+      if (!aliveCounts.has(sid)) aliveCounts.set(sid, { alive: 0, total: 0 });
+      const entry = aliveCounts.get(sid);
+      entry.total += 1;
+      if (bird.alive) entry.alive += 1;
+    }
+    const rows = [...aliveCounts.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .map(([sid, counts]) => {
+        const color = getSpeciesColor(sid);
+        return `<div class="legend-item"><span class="legend-swatch" style="background:${color}"></span><span>Species ${sid}: ${counts.alive}/${counts.total} alive</span></div>`;
+      });
+    speciesLegend.innerHTML = rows.join("") || "No species data.";
   }
 
   function render() {
@@ -274,68 +477,72 @@
     const config = state.data.metadata.config;
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = "#2f5f2f";
-    for (const pipe of state.pipes) {
-      ctx.fillRect(pipe.x, 0, pipe.width, pipe.top);
-      ctx.fillRect(pipe.x, pipe.bottom, pipe.width, canvas.height - pipe.bottom);
+    drawBackground();
+    for (let i = 0; i < state.pipes.length; i += 1) {
+      drawPipe(state.pipes[i], i);
     }
 
-    state.birds.forEach((bird, index) => {
-      if (!bird.alive && !state.showTrails) return;
+    const championBird = state.birds.find((bird) => bird.rank === 1) || state.birds[0];
+    for (let i = 0; i < state.birds.length; i += 1) {
+      const bird = state.birds[i];
+      if (state.showChampionOnly && bird !== championBird) continue;
+      if (!bird.alive && !state.showTrails) continue;
+
       if (state.showTrails) {
         ctx.strokeStyle = bird.color;
         ctx.lineWidth = bird.rank === 1 ? 2.2 : 1;
         ctx.beginPath();
-        for (let i = 0; i < state.trailHistory[index].length; i += 1) {
-          const p = state.trailHistory[index][i];
-          if (i === 0) ctx.moveTo(p.x, p.y);
+        const points = state.trailHistory[i];
+        for (let j = 0; j < points.length; j += 1) {
+          const p = points[j];
+          if (j === 0) ctx.moveTo(p.x, p.y);
           else ctx.lineTo(p.x, p.y);
         }
         ctx.stroke();
       }
 
-      ctx.fillStyle = bird.color;
-      ctx.beginPath();
-      ctx.arc(config.bird_x, bird.y, 9, 0, Math.PI * 2);
-      ctx.fill();
-      if (bird.rank === 1) {
-        ctx.strokeStyle = "#ffd54f";
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.arc(config.bird_x, bird.y, 12, 0, Math.PI * 2);
-        ctx.stroke();
-      }
-    });
+      drawBird(bird, i, config);
 
-    const aliveCount = state.birds.filter((bird) => bird.alive).length;
-    ctx.fillStyle = "rgba(0,0,0,0.55)";
-    ctx.fillRect(8, 8, 285, 90);
-    ctx.fillStyle = "#fff";
-    ctx.font = "16px Arial";
-    ctx.fillText(`Generation: ${state.generationIndex}`, 16, 30);
-    ctx.fillText(`Alive: ${aliveCount}/${state.birds.length}`, 16, 52);
-    ctx.fillText(`Best score: ${state.bestScore}`, 16, 74);
-    ctx.fillText(`Step: ${state.step}/${state.maxSteps}`, 16, 94);
+      if (state.showDebug) {
+        ctx.fillStyle = "#111";
+        ctx.font = "11px monospace";
+        ctx.fillText(`r${bird.rank}: ${bird.score}`, config.bird_x + 16, bird.y - 10);
+      }
+    }
+
+    updateStats(generation);
+    renderSpeciesLegend();
 
     const topFive = [...state.birds]
       .sort((a, b) => (a.rank - b.rank))
       .slice(0, 5)
       .map((bird) => `#${bird.rank}: ${bird.score}${bird.alive ? "" : " ✖"}`)
       .join(" | ");
-    rankingList.textContent = `Scores: ${topFive}`;
+    rankingList.textContent = `Top scores: ${topFive}`;
   }
 
   function animate(timestamp) {
     if (!state.lastTimestamp) state.lastTimestamp = timestamp;
     const deltaMs = timestamp - state.lastTimestamp;
     state.lastTimestamp = timestamp;
-    if (state.playing && state.data) {
-      state.stepAccumulator += (deltaMs / 1000) * 60 * state.speed;
+    state.renderTimeMs += deltaMs;
+
+    if (state.data) {
+      state.stepAccumulator += (deltaMs / 1000) * 60;
       while (state.stepAccumulator >= 1) {
         state.stepAccumulator -= 1;
         stepSimulation();
       }
+
+      if (state.playing) {
+        state.autoplayElapsedMs += deltaMs;
+        const interval = state.simEnded ? Math.min(450, state.autoplayIntervalMs) : state.autoplayIntervalMs;
+        if (state.autoplayElapsedMs >= interval) {
+          advanceGeneration(1);
+        }
+      }
     }
+
     render();
     requestAnimationFrame(animate);
   }
@@ -343,8 +550,11 @@
   function attachControls() {
     playPauseBtn.addEventListener("click", () => {
       state.playing = !state.playing;
-      playPauseBtn.textContent = state.playing ? "Pause" : "Play";
+      playPauseBtn.textContent = state.playing ? "Pause autoplay" : "Play autoplay";
     });
+
+    prevGenBtn.addEventListener("click", () => advanceGeneration(-1));
+    nextGenBtn.addEventListener("click", () => advanceGeneration(1));
 
     generationSlider.addEventListener("input", (event) => {
       if (!state.data) return;
@@ -352,12 +562,24 @@
     });
 
     speedSlider.addEventListener("input", (event) => {
-      state.speed = Math.max(0.1, Number(event.target.value) || 1);
-      speedValue.textContent = `${state.speed.toFixed(2)}x`;
+      state.autoplayIntervalMs = clamp(Number(event.target.value) || 1500, 500, 3000);
+      state.autoplayElapsedMs = 0;
+      statPlayback.textContent = `${state.autoplayIntervalMs} ms/gen`;
     });
 
     trailToggle.addEventListener("change", (event) => {
       state.showTrails = Boolean(event.target.checked);
+      if (!state.showTrails) {
+        state.trailHistory = state.trailHistory.map(() => []);
+      }
+    });
+
+    championOnlyToggle.addEventListener("change", (event) => {
+      state.showChampionOnly = Boolean(event.target.checked);
+    });
+
+    debugToggle.addEventListener("change", (event) => {
+      state.showDebug = Boolean(event.target.checked);
     });
   }
 
@@ -370,10 +592,10 @@
         throw new Error("No generations in evolution.json");
       }
       state.data = data;
+      state.bestPipesAllTime = computeBestPipesAllTime(data);
       generationSlider.min = "0";
       generationSlider.max = String(data.generations.length - 1);
-      generationMax.textContent = String(data.generations.length - 1);
-      setStatus(`Loaded ${data.generations.length} generations.`);
+      setStatus(`Loaded ${data.generations.length} generations from evolution.json.`);
       loadGeneration(0);
     } catch (error) {
       setStatus(`Failed to load evolution.json: ${error.message}`);

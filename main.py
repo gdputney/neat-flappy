@@ -791,7 +791,17 @@ def run_simulation(config: SimulationConfig) -> dict[str, Any]:
         )
         best_hidden_nodes = hidden_node_count(population[best_result["genome_index"]])
         best_enabled_connections = enabled_connection_count(population[best_result["genome_index"]])
-        species_count = len(speciate_population(population, config.compatibility_threshold))
+        species_groups = speciate_population(population, config.compatibility_threshold)
+        genome_index_by_identity = {id(genome): idx for idx, genome in enumerate(population)}
+        species_id_by_genome_index: dict[int, int] = {}
+        for species_id, group in enumerate(species_groups, start=1):
+            for genome in group:
+                genome_index = genome_index_by_identity.get(id(genome))
+                if genome_index is not None:
+                    species_id_by_genome_index[genome_index] = species_id
+        for result in generation_results:
+            result["species_id"] = species_id_by_genome_index.get(int(result["genome_index"]), 0)
+        species_count = len(species_groups)
         threshold_used = config.compatibility_threshold
         next_threshold = adjust_compatibility_threshold(
             threshold=threshold_used,
@@ -1134,10 +1144,13 @@ def write_web_evolution(
             pipes_passed_mean = float(genome.get("pipes_passed", 0.0))
             top_genomes.append(
                 {
+                    "species_id": int(genome.get("species_id", 0)),
                     "rank": rank,
                     "fitness": float(genome.get("fitness", 0.0)),
                     "pipes_passed_mean": pipes_passed_mean,
                     "pipes_passed_max": pipes_passed_max,
+                    "pipes_mean": pipes_passed_mean,
+                    "pipes_max": pipes_passed_max,
                     "genome_json": copy.deepcopy(genome.get("genome_json")),
                 }
             )
