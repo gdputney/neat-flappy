@@ -11,6 +11,15 @@
   const debugToggle = document.getElementById("debugToggle");
   const statusEl = document.getElementById("status");
   const rankingList = document.getElementById("rankingList");
+  const speciesLegend = document.getElementById("speciesLegend");
+
+  const statGeneration = document.getElementById("statGeneration");
+  const statBirdsShown = document.getElementById("statBirdsShown");
+  const statAlive = document.getElementById("statAlive");
+  const statBestGen = document.getElementById("statBestGen");
+  const statBestAll = document.getElementById("statBestAll");
+  const statPlayback = document.getElementById("statPlayback");
+  const statSeed = document.getElementById("statSeed");
 
   const statGeneration = document.getElementById("statGeneration");
   const statBirdsShown = document.getElementById("statBirdsShown");
