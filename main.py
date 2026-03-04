@@ -1180,6 +1180,12 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--seed", type=int, default=None, help="Seed for deterministic runs")
     parser.add_argument(
+        "--generations",
+        type=int,
+        default=SimulationConfig.generations,
+        help="Number of generations to run",
+    )
+    parser.add_argument(
         "--max-steps",
         type=int,
         default=SimulationConfig.max_steps,
@@ -1250,6 +1256,7 @@ def main() -> None:
     args = parse_args()
     config = SimulationConfig(
         seed=args.seed,
+        generations=max(1, args.generations),
         max_steps=max(1, args.max_steps),
         flap_policy=args.flap_policy,
         flap_cooldown_frames=max(0, args.flap_cooldown_frames),

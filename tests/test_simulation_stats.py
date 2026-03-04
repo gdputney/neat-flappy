@@ -268,6 +268,18 @@ class SimulationStatsTests(unittest.TestCase):
 
 
 class CliParsingTests(unittest.TestCase):
+    def test_parse_args_uses_default_generations(self) -> None:
+        with patch("sys.argv", ["main.py"]):
+            args = parse_args()
+
+        self.assertEqual(args.generations, 10)
+
+    def test_parse_args_accepts_generations(self) -> None:
+        with patch("sys.argv", ["main.py", "--generations", "25"]):
+            args = parse_args()
+
+        self.assertEqual(args.generations, 25)
+
     def test_parse_args_uses_updated_default_max_steps(self) -> None:
         with patch("sys.argv", ["main.py"]):
             args = parse_args()
