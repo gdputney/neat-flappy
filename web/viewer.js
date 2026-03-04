@@ -21,6 +21,14 @@
   const statPlayback = document.getElementById("statPlayback");
   const statSeed = document.getElementById("statSeed");
 
+  const statGeneration = document.getElementById("statGeneration");
+  const statBirdsShown = document.getElementById("statBirdsShown");
+  const statAlive = document.getElementById("statAlive");
+  const statBestGen = document.getElementById("statBestGen");
+  const statBestAll = document.getElementById("statBestAll");
+  const statPlayback = document.getElementById("statPlayback");
+  const statSeed = document.getElementById("statSeed");
+
   const state = {
     data: null,
     generationIndex: 0,
@@ -181,27 +189,6 @@
     }, 0);
   }
 
-  function getSpeciesColor(speciesId) {
-    const sid = Number.isFinite(Number(speciesId)) ? Number(speciesId) : 0;
-    const palette = [
-      "hsl(0 80% 57%)",
-      "hsl(36 82% 56%)",
-      "hsl(85 70% 50%)",
-      "hsl(133 62% 46%)",
-      "hsl(170 68% 45%)",
-      "hsl(210 78% 56%)",
-      "hsl(252 78% 63%)",
-      "hsl(289 67% 58%)",
-      "hsl(325 76% 58%)",
-      "hsl(18 72% 54%)",
-    ];
-    if (sid <= 0) return "hsla(0, 0%, 80%, 0.72)";
-    const idx = (sid - 1) % palette.length;
-    if (sid <= palette.length) return palette[idx].replace(")", " / 0.72)").replace("hsl(", "hsla(");
-    const hue = (sid * 137.508) % 360;
-    return `hsla(${hue.toFixed(1)}, 72%, 56%, 0.72)`;
-  }
-
   function getChampionPipes(generation) {
     const champ = (generation.genomes || []).find((entry) => Number(entry.rank) === 1) || generation.genomes?.[0];
     return Number(champ?.pipes_passed_max || 0);
@@ -228,21 +215,17 @@
     state.stepAccumulator = 0;
     state.autoplayElapsedMs = 0;
     state.pipes = [createPipe(rng, config.first_pipe_x, config)];
-    state.birds = generation.genomes.map((entry) => {
-      const speciesId = Number(entry.species_id ?? 0);
-      return {
-        rank: entry.rank,
-        speciesId,
-        genomeJson: entry.genome_json,
-        y: config.bird_start_y,
-        velocity: 0,
-        flapCooldown: 0,
-        isFlapping: false,
-        alive: true,
-        score: 0,
-        color: getSpeciesColor(speciesId),
-      };
-    });
+    state.birds = generation.genomes.map((entry, i) => ({
+      rank: entry.rank,
+      genomeJson: entry.genome_json,
+      y: config.bird_start_y,
+      velocity: 0,
+      flapCooldown: 0,
+      isFlapping: false,
+      alive: true,
+      score: 0,
+      color: `hsla(${Math.round((i * 360) / Math.max(1, generation.genomes.length))}, 85%, 52%, 0.72)`,
+    }));
     state.nextPipeIndexPerBird = state.birds.map(() => 0);
     state.trailHistory = state.birds.map(() => []);
     state.pipeRngState = rng;
@@ -451,26 +434,6 @@
     statSeed.textContent = String(generation.pipe_seed);
   }
 
-  function renderSpeciesLegend() {
-    if (!speciesLegend) return;
-    const aliveCounts = new Map();
-    for (let i = 0; i < state.birds.length; i += 1) {
-      const bird = state.birds[i];
-      const sid = Number(bird.speciesId || 0);
-      if (!aliveCounts.has(sid)) aliveCounts.set(sid, { alive: 0, total: 0 });
-      const entry = aliveCounts.get(sid);
-      entry.total += 1;
-      if (bird.alive) entry.alive += 1;
-    }
-    const rows = [...aliveCounts.entries()]
-      .sort((a, b) => a[0] - b[0])
-      .map(([sid, counts]) => {
-        const color = getSpeciesColor(sid);
-        return `<div class="legend-item"><span class="legend-swatch" style="background:${color}"></span><span>Species ${sid}: ${counts.alive}/${counts.total} alive</span></div>`;
-      });
-    speciesLegend.innerHTML = rows.join("") || "No species data.";
-  }
-
   function render() {
     const generation = state.data?.generations?.[state.generationIndex];
     if (!generation) return;
@@ -511,7 +474,6 @@
     }
 
     updateStats(generation);
-    renderSpeciesLegend();
 
     const topFive = [...state.birds]
       .sort((a, b) => (a.rank - b.rank))
