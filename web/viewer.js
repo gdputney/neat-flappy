@@ -12,6 +12,8 @@
   const debugToggle = document.getElementById("debugToggle");
   const showBrainToggle = document.getElementById("showBrainToggle");
   const statusEl = document.getElementById("status");
+  const modeLabelEl = document.getElementById("modeLabel");
+  const errorMessageEl = document.getElementById("errorMessage");
   const rankingList = document.getElementById("rankingList");
   const brainPanel = document.getElementById("brainPanel");
   const brainInputsEl = document.getElementById("brainInputs");
@@ -35,6 +37,7 @@
   const statCurriculumSpacing = document.getElementById("statCurriculumSpacing");
   const milestoneBanner = document.getElementById("milestoneBanner");
   const generationDebugLine = document.getElementById("generationDebugLine");
+  const generationSliderLabel = document.querySelector('label[for="generationSlider"]');
 
   const state = {
     data: null,
@@ -64,6 +67,11 @@
     simSpeedMultiplier: 1.5,
     bestPipesAllTime: 0,
     renderTimeMs: 0,
+    mode: "evolution",
+    replayData: null,
+    replayFrames: [],
+    replayFrameIndex: 0,
+    replayScore: 0,
     runtimeCache: new WeakMap(),
     brainView: {
       championBird: null,
@@ -94,6 +102,81 @@
 
   function setStatus(text) {
     statusEl.textContent = text;
+  }
+
+  function setModeLabel(text) {
+    if (modeLabelEl) modeLabelEl.textContent = text;
+  }
+
+  function setErrorMessage(text) {
+    if (errorMessageEl) errorMessageEl.textContent = text;
+  }
+
+  function isReplayMode() {
+    return state.mode === "replay";
+  }
+
+  function configureControlsForMode() {
+    const replay = isReplayMode();
+    prevGenBtn.hidden = replay;
+    nextGenBtn.hidden = replay;
+    autoplayToggle.closest("label")?.toggleAttribute("hidden", replay);
+    generationSlider.hidden = replay;
+    generationSliderLabel?.toggleAttribute("hidden", replay);
+    trailToggle.closest("label")?.toggleAttribute("hidden", replay);
+    championOnlyToggle.closest("label")?.toggleAttribute("hidden", replay);
+    debugToggle.closest("label")?.toggleAttribute("hidden", replay);
+    rankingList.hidden = replay;
+    generationDebugLine.hidden = replay;
+  }
+
+  function applyReplayFrame(frameIndex) {
+    const frame = state.replayFrames[frameIndex];
+    if (!frame) return;
+
+    const replayConfig = state.replayData?.meta?.config || {};
+    const baseConfig = state.data?.metadata?.config || {};
+    const pipeWidth = Number(replayConfig.pipe_width ?? baseConfig.pipe_width ?? 70);
+    const birdX = Number(replayConfig.bird_x ?? baseConfig.bird_x ?? 80);
+    const worldHeight = Number(replayConfig.world_height ?? baseConfig.world_height ?? canvas.height);
+    const worldWidth = Number(replayConfig.world_width ?? baseConfig.world_width ?? canvas.width);
+
+    state.replayFrameIndex = frameIndex;
+    state.step = frameIndex;
+    state.replayScore = Number(frame.score ?? 0);
+    state.pipes = (frame.pipes || []).map((pipe) => ({
+      x: Number(pipe.x),
+      width: pipeWidth,
+      top: Number(pipe.top),
+      bottom: Number(pipe.bottom),
+    }));
+    state.birds = [{
+      y: clamp(Number(frame.bird?.y ?? worldHeight / 2), 0, worldHeight),
+      velocity: Number(frame.bird?.vel ?? 0),
+      alive: frameIndex < (state.replayFrames.length - 1),
+      color: "#f59e0b",
+      score: state.replayScore,
+      rank: 1,
+      isFlapping: false,
+      flapCooldown: 0,
+    }];
+    state.currentGenObj = {
+      generation: frame.generation?.generation ?? "-",
+      pipe_seed: frame.generation?.source ?? "-",
+      genomes: [],
+    };
+
+    if (!state.data) {
+      state.data = { metadata: { config: {} }, generations: [] };
+    }
+    state.data.metadata = state.data.metadata || {};
+    state.data.metadata.config = {
+      ...baseConfig,
+      bird_x: birdX,
+      world_height: worldHeight,
+      world_width: worldWidth,
+      pipe_width: pipeWidth,
+    };
   }
 
   function mulberry32(seed) {
@@ -595,6 +678,18 @@
   }
 
   function stepSimulation() {
+    if (isReplayMode()) {
+      const nextFrameIndex = state.replayFrameIndex + 1;
+      if (nextFrameIndex >= state.replayFrames.length) {
+        state.generationDone = true;
+        state.playing = false;
+        playPauseBtn.textContent = "Play sim";
+        return;
+      }
+      applyReplayFrame(nextFrameIndex);
+      return;
+    }
+
     const config = state.data.metadata.config;
     const difficulty = state.currentDifficulty || getGenerationDifficulty(state.data.generations[state.generationIndex]);
     const effectiveConfig = {
@@ -689,6 +784,22 @@
   }
 
   function updateStats(generation) {
+    if (isReplayMode()) {
+      statGeneration.textContent = "Replay mode";
+      statBirdsShown.textContent = "1";
+      statAlive.textContent = `Step ${state.replayFrameIndex + 1} / ${state.replayFrames.length}`;
+      statBestGen.textContent = String(state.replayScore);
+      statBestAll.textContent = String(state.replayData?.meta?.pipes_passed ?? state.replayScore);
+      statPlayback.textContent = state.playing ? "ON" : "PAUSED";
+      statSeed.textContent = String(state.replayData?.meta?.generation?.source ?? "-");
+      statCurriculumLevel.textContent = "-";
+      statCurriculumBestEver.textContent = "-";
+      statCurriculumGap.textContent = "-";
+      statCurriculumSpeed.textContent = "-";
+      statCurriculumSpacing.textContent = "-";
+      return;
+    }
+
     const total = state.data.generations.length;
     const visibleBirds = state.showChampionOnly ? Math.min(state.birds.length, 1) : state.birds.length;
     const alive = state.birds.filter((bird) => bird.alive).length;
@@ -759,12 +870,14 @@
 
     updateStats(generation);
 
-    const topFive = [...state.birds]
-      .sort((a, b) => (a.rank - b.rank))
-      .slice(0, 5)
-      .map((bird) => `#${bird.rank}: ${bird.score}${bird.alive ? "" : " ✖"}`)
-      .join(" | ");
-    rankingList.textContent = `Top scores: ${topFive}`;
+    if (!isReplayMode()) {
+      const topFive = [...state.birds]
+        .sort((a, b) => (a.rank - b.rank))
+        .slice(0, 5)
+        .map((bird) => `#${bird.rank}: ${bird.score}${bird.alive ? "" : " ✖"}`)
+        .join(" | ");
+      rankingList.textContent = `Top scores: ${topFive}`;
+    }
     if (state.milestoneBannerText) {
       milestoneBanner.textContent = state.milestoneBannerText;
       milestoneBanner.classList.add("visible");
@@ -787,7 +900,7 @@
         }
       }
 
-      if (state.playing && state.autoplayEnabled && state.generationDone) {
+      if (!isReplayMode() && state.playing && state.autoplayEnabled && state.generationDone) {
         const atLastGeneration = state.generationIndex >= state.data.generations.length - 1;
         if (atLastGeneration) {
           state.autoplayEnabled = false;
@@ -812,8 +925,14 @@
       state.autoplayEnabled = Boolean(event.target.checked);
     });
 
-    prevGenBtn.addEventListener("click", () => loadGenerationByIndex((state.generationIndex - 1 + state.data.generations.length) % state.data.generations.length, { clearBanner: true }));
-    nextGenBtn.addEventListener("click", () => loadGenerationByIndex((state.generationIndex + 1) % state.data.generations.length, { clearBanner: true }));
+    prevGenBtn.addEventListener("click", () => {
+      if (isReplayMode()) return;
+      loadGenerationByIndex((state.generationIndex - 1 + state.data.generations.length) % state.data.generations.length, { clearBanner: true });
+    });
+    nextGenBtn.addEventListener("click", () => {
+      if (isReplayMode()) return;
+      loadGenerationByIndex((state.generationIndex + 1) % state.data.generations.length, { clearBanner: true });
+    });
 
     generationSlider.addEventListener("input", (event) => {
       if (!state.data) return;
@@ -845,14 +964,39 @@
     });
   }
 
+  async function fetchJson(path) {
+    let response;
+    try {
+      response = await fetch(path, { cache: "no-store" });
+    } catch (error) {
+      const networkError = new Error(`Network error while loading ${path}: ${error.message}`);
+      networkError.kind = "network";
+      throw networkError;
+    }
+
+    if (!response.ok) {
+      const httpError = new Error(`HTTP ${response.status}`);
+      httpError.kind = "http";
+      httpError.status = response.status;
+      throw httpError;
+    }
+
+    try {
+      return await response.json();
+    } catch (error) {
+      const parseError = new Error(`Invalid JSON in ${path}: ${error.message}`);
+      parseError.kind = "parse";
+      throw parseError;
+    }
+  }
+
   async function loadEvolution() {
     try {
-      const response = await fetch("evolution.json", { cache: "no-store" });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const data = await response.json();
+      const data = await fetchJson("evolution.json");
       if (!Array.isArray(data.generations) || data.generations.length === 0) {
         throw new Error("No generations in evolution.json");
       }
+      state.mode = "evolution";
       state.data = data;
       state.generationNumberToIndex = new Map();
       state.availableGenerationNumbers = [];
@@ -864,6 +1008,8 @@
       state.bestPipesAllTime = computeBestPipesAllTime(data);
       generationSlider.min = "0";
       generationSlider.max = String(data.generations.length - 1);
+      setErrorMessage("");
+      setModeLabel("Evolution mode");
       setStatus(`Loaded ${data.generations.length} generations from evolution.json.`);
       state.simSpeedMultiplier = clamp((Number(speedSlider.value) || 1500) / 1000, 0.5, 3);
       if (state.generationNumberToIndex.has(0)) {
@@ -872,12 +1018,73 @@
         loadGenerationByIndex(0, { clearBanner: true });
       }
     } catch (error) {
-      setStatus(`Failed to load evolution.json: ${error.message}`);
-      console.error(error);
+      console.error("Failed loading evolution.json", {
+        kind: error.kind || "unknown",
+        status: error.status,
+        message: error.message,
+      });
+      throw error;
+    }
+  }
+
+  async function loadReplay() {
+    try {
+      const data = await fetchJson("simulation.json");
+      if (!Array.isArray(data.frames) || data.frames.length === 0) {
+        throw new Error("No frames in simulation.json");
+      }
+
+      state.mode = "replay";
+      state.replayData = data;
+      state.replayFrames = data.frames;
+      state.stepAccumulator = 0;
+      state.generationDone = false;
+      state.simSpeedMultiplier = clamp((Number(speedSlider.value) || 1500) / 1000, 0.5, 3);
+      setErrorMessage("");
+      setModeLabel("Replay mode");
+      setStatus(`Loaded ${data.frames.length} replay frames from simulation.json.`);
+      applyReplayFrame(0);
+    } catch (error) {
+      console.error("Failed loading simulation.json", {
+        kind: error.kind || "unknown",
+        status: error.status,
+        message: error.message,
+      });
+      throw error;
+    }
+  }
+
+  async function initializeDataLoad() {
+    const modeParam = new URLSearchParams(window.location.search).get("mode");
+    const forcedMode = modeParam === "evolution" || modeParam === "replay" ? modeParam : null;
+
+    try {
+      if (forcedMode === "evolution") {
+        await loadEvolution();
+      } else if (forcedMode === "replay") {
+        await loadReplay();
+      } else {
+        try {
+          await loadEvolution();
+        } catch (evolutionError) {
+          const canFallback = (evolutionError.kind === "network")
+            || (evolutionError.kind === "http" && Number(evolutionError.status) === 404);
+          if (!canFallback) throw evolutionError;
+          await loadReplay();
+        }
+      }
+      configureControlsForMode();
+    } catch (error) {
+      setModeLabel("");
+      setStatus("No web data found.");
+      setErrorMessage("No web data found. Run: python main.py --export-web-evolution … OR python main.py --record-replay");
+      state.currentGenObj = null;
+      state.data = null;
+      configureControlsForMode();
     }
   }
 
   attachControls();
-  loadEvolution();
+  initializeDataLoad();
   requestAnimationFrame(animate);
 })();
