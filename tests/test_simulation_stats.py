@@ -29,6 +29,7 @@ from main import (
     bounded_gap_shaping,
     proximity_weight,
     normalize_inputs,
+    compute_curriculum_params,
 )
 
 
@@ -125,6 +126,46 @@ class SimulationStatsTests(unittest.TestCase):
 
 
 
+
+    def test_compute_curriculum_params_uses_highest_achieved_milestone(self) -> None:
+        config = SimulationConfig(enable_curriculum=True)
+
+        gap, speed, spacing, level = compute_curriculum_params(25, 180.0, 3.0, 220.0, config)
+
+        self.assertEqual(level, 1)
+        self.assertEqual(gap, 175.0)
+        self.assertEqual(speed, 3.1)
+        self.assertEqual(spacing, 220.0)
+
+    def test_compute_curriculum_params_clamps_gap_and_spacing(self) -> None:
+        config = SimulationConfig(
+            enable_curriculum=True,
+            curriculum_milestones=(5,),
+            curriculum_gap_deltas=(300.0,),
+            curriculum_speed_deltas=(0.5,),
+            curriculum_spacing_deltas=(200.0,),
+        )
+
+        gap, speed, spacing, level = compute_curriculum_params(5, 180.0, 3.0, 220.0, config)
+
+        self.assertEqual(level, 0)
+        self.assertEqual(gap, 80.0)
+        self.assertEqual(speed, 3.5)
+        self.assertEqual(spacing, 140.0)
+
+    def test_generation_stats_include_curriculum_fields_when_enabled(self) -> None:
+        config = SimulationConfig(population_size=6, generations=2, max_steps=20, seed=7, enable_curriculum=True)
+
+        simulation_data = run_simulation(config)
+
+        for generation in simulation_data["generations"]:
+            self.assertIn("curriculum_enabled", generation)
+            self.assertIn("curriculum_level", generation)
+            self.assertIn("curriculum_best_pipes_ever", generation)
+            self.assertIn("curriculum_gap", generation)
+            self.assertIn("curriculum_pipe_speed", generation)
+            self.assertIn("curriculum_pipe_spacing", generation)
+            self.assertTrue(generation["curriculum_enabled"])
 
     def test_seeded_run_is_deterministic_for_first_five_generations(self) -> None:
         config_a = SimulationConfig(generations=5, population_size=20, max_steps=60, seed=7, eval_episodes=2, deterministic_pipes=True, flap_policy="deterministic")
@@ -285,6 +326,30 @@ class CliParsingTests(unittest.TestCase):
             args = parse_args()
 
         self.assertEqual(args.max_steps, 5000)
+
+    def test_parse_args_accepts_curriculum_arguments(self) -> None:
+        with patch(
+            "sys.argv",
+            [
+                "main.py",
+                "--enable-curriculum",
+                "--curriculum-mode",
+                "species",
+                "--curriculum-milestones",
+                "5,10",
+                "--curriculum-gap-deltas",
+                "1,2",
+                "--curriculum-speed-deltas",
+                "0.1,0.2",
+                "--curriculum-spacing-deltas",
+                "0,5",
+            ],
+        ):
+            args = parse_args()
+
+        self.assertTrue(args.enable_curriculum)
+        self.assertEqual(args.curriculum_mode, "species")
+        self.assertEqual(args.curriculum_milestones, "5,10")
 
     def test_parse_args_accepts_max_steps(self) -> None:
         with patch("sys.argv", ["main.py", "--max-steps", "321", "--eval-episodes", "3", "--deterministic-pipes", "--flap-policy", "deterministic"]):
