@@ -145,6 +145,23 @@ Then visit `http://localhost:8000/web/` to view the replay on an HTML canvas wit
 - Playback speed slider
 - Overlay text showing score and generation
 
+## Web evolution viewer
+
+Export evolution data, then serve the repo and open the web app:
+
+```bash
+python main.py --export-web-evolution --deterministic-pipes
+python -m http.server 8000
+```
+
+Open `http://localhost:8000/web/` and use the overlay panel to:
+
+- scrub generations with Prev/Next or the generation slider
+- play/pause autoplay across generations
+- adjust autoplay interval (`500`-`3000` ms per generation)
+- toggle trails, champion-only highlight, and debug overlay labels
+- monitor generation stats (alive birds, current/all-time best pipes, and deterministic pipe seed)
+
 ## Visualize a saved genome
 
 Generate a DOT + PNG network visualization from a saved best genome:

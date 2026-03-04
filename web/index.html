@@ -3,44 +3,183 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" href="data:," />
     <title>NEAT Flappy Web Evolution Viewer</title>
     <style>
-      :root { color-scheme: light dark; font-family: Arial, sans-serif; }
-      body { margin: 0; padding: 16px; background: #111; color: #eee; }
-      .container { max-width: 1040px; margin: 0 auto; }
-      .controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; margin-bottom: 12px; }
-      .control { display: flex; align-items: center; gap: 8px; }
-      canvas {
-        width: 1000px; max-width: 100%; aspect-ratio: 500 / 800;
-        border: 1px solid #444; background: linear-gradient(#2f8dd1, #7ec0ee); display: block;
+      :root {
+        color-scheme: dark;
+        font-family: Inter, Arial, sans-serif;
       }
-      #status { opacity: 0.9; margin-bottom: 10px; }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        padding: 12px;
+        background: #0b1020;
+        color: #e5e7eb;
+      }
+      .container {
+        max-width: 1080px;
+        margin: 0 auto;
+      }
+      h1 {
+        margin: 0 0 8px;
+        font-size: clamp(1.1rem, 3.4vw, 1.7rem);
+      }
+      #status {
+        margin: 0 0 10px;
+        color: #bfdbfe;
+        font-size: 0.95rem;
+      }
+      .viewer-shell {
+        position: relative;
+        border-radius: 12px;
+        overflow: hidden;
+        border: 1px solid #2a3558;
+        background: #111827;
+      }
+      canvas {
+        width: 100%;
+        height: auto;
+        aspect-ratio: 500 / 800;
+        display: block;
+        background: linear-gradient(#2f8dd1, #7ec0ee);
+      }
+      .overlay {
+        position: absolute;
+        inset: 10px auto auto 10px;
+        width: min(95%, 390px);
+        padding: 10px;
+        border-radius: 10px;
+        background: rgba(15, 23, 42, 0.86);
+        border: 1px solid rgba(148, 163, 184, 0.35);
+        backdrop-filter: blur(2px);
+      }
+      .stats {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 5px 10px;
+        margin-bottom: 9px;
+        font-size: 0.86rem;
+      }
+      .stats b { color: #f8fafc; }
+      .controls {
+        display: grid;
+        gap: 8px;
+      }
+      .row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        align-items: center;
+      }
+      button {
+        border: 1px solid #4b5563;
+        border-radius: 8px;
+        background: #1f2937;
+        color: #f9fafb;
+        padding: 6px 10px;
+        font-size: 0.86rem;
+      }
+      button:hover { background: #374151; }
       input[type="range"] { width: 100%; }
-      .rankings { font-size: 0.9rem; opacity: 0.95; margin-top: 10px; line-height: 1.35; }
+      .toggle {
+        font-size: 0.82rem;
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 2px 0;
+      }
+      #rankingList {
+        margin-top: 10px;
+        font-size: 0.86rem;
+        color: #d1d5db;
+      }
+
+      .species-legend {
+        margin-top: 8px;
+        max-height: 120px;
+        overflow: auto;
+        border-top: 1px solid rgba(148, 163, 184, 0.35);
+        padding-top: 6px;
+        font-size: 0.8rem;
+      }
+      .legend-item {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin: 2px 0;
+      }
+      .legend-swatch {
+        width: 11px;
+        height: 11px;
+        border-radius: 3px;
+        border: 1px solid rgba(255,255,255,0.5);
+        flex: 0 0 auto;
+      }
+      .viewer-debug {
+        margin-top: 6px;
+        padding: 6px;
+        border-radius: 6px;
+        border: 1px solid rgba(148, 163, 184, 0.35);
+        background: rgba(2, 6, 23, 0.55);
+        font-size: 0.76rem;
+        color: #bfdbfe;
+        line-height: 1.35;
+        word-break: break-word;
+      }
+      @media (max-width: 680px) {
+        body { padding: 8px; }
+        .overlay {
+          inset: auto 6px 6px 6px;
+          width: auto;
+          max-height: 62%;
+          overflow: auto;
+        }
+        .stats { grid-template-columns: 1fr; }
+      }
     </style>
   </head>
   <body>
     <div class="container">
       <h1>NEAT Flappy Web Evolution Viewer</h1>
       <p id="status">Loading evolution.json...</p>
-      <div class="controls">
-        <div class="control"><button id="playPauseBtn" type="button">Pause</button></div>
-        <div>
-          <label for="generationSlider">Generation</label>
-          <input id="generationSlider" type="range" min="0" max="0" value="0" step="1" />
-          <div>G<span id="generationValue">0</span> / <span id="generationMax">0</span></div>
-        </div>
-        <div>
-          <label for="speedSlider">Playback speed</label>
-          <input id="speedSlider" type="range" min="0.25" max="5" value="1" step="0.25" />
-          <div><span id="speedValue">1.00x</span></div>
-        </div>
-        <div class="control">
-          <label><input id="trailToggle" type="checkbox" /> Show trails</label>
-        </div>
+      <div class="viewer-shell">
+        <canvas id="simCanvas" width="500" height="800"></canvas>
+        <aside class="overlay" aria-label="Viewer controls and stats">
+          <div class="stats">
+            <div>Generation: <b id="statGeneration">0 / 0</b></div>
+            <div>Birds shown: <b id="statBirdsShown">0</b></div>
+            <div>Alive count: <b id="statAlive">0</b></div>
+            <div>Best pipes (gen): <b id="statBestGen">0</b></div>
+            <div>Best pipes (all-time): <b id="statBestAll">0</b></div>
+            <div>Playback: <b id="statPlayback">1500 ms/gen</b></div>
+            <div style="grid-column: 1 / -1;">Deterministic seed: <b id="statSeed">-</b></div>
+          </div>
+
+          <div class="controls">
+            <div class="row">
+              <button id="prevGenBtn" type="button">◀ Prev</button>
+              <button id="playPauseBtn" type="button">Pause autoplay</button>
+              <button id="nextGenBtn" type="button">Next ▶</button>
+            </div>
+
+            <label for="generationSlider">Generation scrubber</label>
+            <input id="generationSlider" type="range" min="0" max="0" value="0" step="1" />
+
+            <label for="speedSlider">Autoplay interval</label>
+            <input id="speedSlider" type="range" min="500" max="3000" value="1500" step="100" />
+
+            <div class="row">
+              <label class="toggle"><input id="trailToggle" type="checkbox" /> Trails</label>
+              <label class="toggle"><input id="championOnlyToggle" type="checkbox" /> Champion only</label>
+              <label class="toggle"><input id="debugToggle" type="checkbox" /> Debug overlay</label>
+            </div>
+            <div class="species-legend" id="speciesLegend">Species legend will appear here.</div>
+            <div class="viewer-debug" id="viewerDebugPanel" hidden>Debug info will appear here.</div>
+          </div>
+        </aside>
       </div>
-      <canvas id="simCanvas" width="500" height="800"></canvas>
-      <div class="rankings" id="rankingList"></div>
+      <div id="rankingList"></div>
     </div>
     <script src="viewer.js"></script>
   </body>
