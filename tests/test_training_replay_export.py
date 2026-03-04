@@ -37,7 +37,7 @@ class TrainingReplayExportTests(unittest.TestCase):
         self.assertTrue(created, "expected a new run directory")
         run_dir = runs_dir / created[-1]
 
-        replay_path = run_dir / "web" / "training_replay.json"
+        replay_path = repo_root / "web" / "training_replay.json"
         self.assertTrue(replay_path.exists())
 
         payload = json.loads(replay_path.read_text(encoding="utf-8"))
