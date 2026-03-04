@@ -1666,7 +1666,7 @@ def main() -> None:
         print(f"Saved web evolution output: {out_path}")
 
     if args.record_training_replay:
-        training_replay_path = run_dir / "web" / "training_replay.json"
+        training_replay_path = Path(__file__).resolve().parent / "web" / "training_replay.json"
         replay_episode = max(0, min(args.replay_episode, config.eval_episodes - 1))
         out_path = write_training_replay(
             simulation_data=simulation_data,
@@ -1675,7 +1675,7 @@ def main() -> None:
             replay_top_k=max(1, args.replay_top_k),
             replay_episode=replay_episode,
         )
-        print(f"Saved training replay output: {out_path}")
+        print(f"Saved training replay: {out_path}")
 
     print(f"Saved simulation output: {output_path}")
     print(f"Saved run stats: {run_dir / 'stats.json'}")
