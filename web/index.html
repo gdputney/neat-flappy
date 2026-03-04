@@ -94,39 +94,6 @@
         font-size: 0.86rem;
         color: #d1d5db;
       }
-
-      .species-legend {
-        margin-top: 8px;
-        max-height: 120px;
-        overflow: auto;
-        border-top: 1px solid rgba(148, 163, 184, 0.35);
-        padding-top: 6px;
-        font-size: 0.8rem;
-      }
-      .legend-item {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        margin: 2px 0;
-      }
-      .legend-swatch {
-        width: 11px;
-        height: 11px;
-        border-radius: 3px;
-        border: 1px solid rgba(255,255,255,0.5);
-        flex: 0 0 auto;
-      }
-      .viewer-debug {
-        margin-top: 6px;
-        padding: 6px;
-        border-radius: 6px;
-        border: 1px solid rgba(148, 163, 184, 0.35);
-        background: rgba(2, 6, 23, 0.55);
-        font-size: 0.76rem;
-        color: #bfdbfe;
-        line-height: 1.35;
-        word-break: break-word;
-      }
       @media (max-width: 680px) {
         body { padding: 8px; }
         .overlay {
@@ -174,8 +141,6 @@
               <label class="toggle"><input id="championOnlyToggle" type="checkbox" /> Champion only</label>
               <label class="toggle"><input id="debugToggle" type="checkbox" /> Debug overlay</label>
             </div>
-            <div class="species-legend" id="speciesLegend">Species legend will appear here.</div>
-            <div class="viewer-debug" id="viewerDebugPanel" hidden>Debug info will appear here.</div>
           </div>
         </aside>
       </div>

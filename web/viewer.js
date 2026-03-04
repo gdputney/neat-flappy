@@ -12,7 +12,14 @@
   const statusEl = document.getElementById("status");
   const rankingList = document.getElementById("rankingList");
   const speciesLegend = document.getElementById("speciesLegend");
-  const viewerDebugPanel = document.getElementById("viewerDebugPanel");
+
+  const statGeneration = document.getElementById("statGeneration");
+  const statBirdsShown = document.getElementById("statBirdsShown");
+  const statAlive = document.getElementById("statAlive");
+  const statBestGen = document.getElementById("statBestGen");
+  const statBestAll = document.getElementById("statBestAll");
+  const statPlayback = document.getElementById("statPlayback");
+  const statSeed = document.getElementById("statSeed");
 
   const statGeneration = document.getElementById("statGeneration");
   const statBirdsShown = document.getElementById("statBirdsShown");
@@ -46,8 +53,6 @@
     autoplayElapsedMs: 0,
     bestPipesAllTime: 0,
     renderTimeMs: 0,
-    evolutionUrl: "./evolution.json",
-    topLevelKeys: [],
     clouds: [
       { x: 30, y: 72, speed: 4, scale: 1.0, alpha: 0.2 },
       { x: 200, y: 120, speed: 7, scale: 1.35, alpha: 0.17 },
@@ -215,69 +220,20 @@
   function computeBestPipesAllTime(data) {
     return data.generations.reduce((bestGen, generation) => {
       const genBest = (generation.genomes || []).reduce((bestGenome, genome) => {
-        return Math.max(bestGenome, getGenomePipesMax(genome));
+        return Math.max(bestGenome, Number(genome.pipes_passed_max || 0));
       }, 0);
       return Math.max(bestGen, genBest);
     }, 0);
   }
 
-  function getSpeciesColor(speciesId) {
-    const sid = Number.isFinite(Number(speciesId)) ? Number(speciesId) : 0;
-    const palette = [
-      "hsl(0 80% 57%)",
-      "hsl(36 82% 56%)",
-      "hsl(85 70% 50%)",
-      "hsl(133 62% 46%)",
-      "hsl(170 68% 45%)",
-      "hsl(210 78% 56%)",
-      "hsl(252 78% 63%)",
-      "hsl(289 67% 58%)",
-      "hsl(325 76% 58%)",
-      "hsl(18 72% 54%)",
-    ];
-    if (sid <= 0) return "hsla(0, 0%, 80%, 0.72)";
-    const idx = (sid - 1) % palette.length;
-    if (sid <= palette.length) return palette[idx].replace(")", " / 0.72)").replace("hsl(", "hsla(");
-    const hue = (sid * 137.508) % 360;
-    return `hsla(${hue.toFixed(1)}, 72%, 56%, 0.72)`;
-  }
-
-  function getGenomePipesMax(genome) {
-    return Number(getDefined(
-      genome?.pipes_max,
-      genome?.best_pipes_passed_max,
-      genome?.pipesPassedMax,
-      genome?.pipes_passed_max,
-    ) ?? 0);
-  }
-
-  function getGenomePipesMean(genome) {
-    return Number(getDefined(
-      genome?.pipes_mean,
-      genome?.best_pipes_passed_mean,
-      genome?.pipesPassedMean,
-      genome?.pipes_passed_mean,
-    ) ?? 0);
-  }
-
-  function getGenomeFitness(genome) {
-    return Number(getDefined(genome?.fitness, genome?.mean_fitness, genome?.score) ?? 0);
-  }
-
-  function getGenomeSpeciesId(genome) {
-    const raw = getDefined(genome?.species_id, genome?.species, genome?.specie_id);
-    if (raw === undefined || raw === null || raw === "") return 0;
-    return Number(raw) || 0;
-  }
-
   function getChampionPipes(generation) {
     const champ = (generation.genomes || []).find((entry) => Number(entry.rank) === 1) || generation.genomes?.[0];
-    return getGenomePipesMax(champ);
+    return Number(champ?.pipes_passed_max || 0);
   }
 
   function advanceGeneration(delta) {
     if (!state.data) return;
-    const total = state.generations.length;
+    const total = state.data.generations.length;
     const next = (state.generationIndex + delta + total) % total;
     loadGeneration(next);
   }
@@ -296,23 +252,17 @@
     state.stepAccumulator = 0;
     state.autoplayElapsedMs = 0;
     state.pipes = [createPipe(rng, config.first_pipe_x, config)];
-    state.birds = generation.genomes.map((entry) => {
-      const speciesId = getGenomeSpeciesId(entry);
-      return {
-        rank: Number(entry.rank ?? 0),
-        speciesId,
-        genomeJson: entry.genome_json,
-        y: config.bird_start_y,
-        velocity: 0,
-        flapCooldown: 0,
-        isFlapping: false,
-        alive: true,
-        score: 0,
-        exportedFitness: getGenomeFitness(entry),
-        exportedPipesMean: getGenomePipesMean(entry),
-        color: getSpeciesColor(speciesId),
-      };
-    });
+    state.birds = generation.genomes.map((entry, i) => ({
+      rank: entry.rank,
+      genomeJson: entry.genome_json,
+      y: config.bird_start_y,
+      velocity: 0,
+      flapCooldown: 0,
+      isFlapping: false,
+      alive: true,
+      score: 0,
+      color: `hsla(${Math.round((i * 360) / Math.max(1, generation.genomes.length))}, 85%, 52%, 0.72)`,
+    }));
     state.nextPipeIndexPerBird = state.birds.map(() => 0);
     state.trailHistory = state.birds.map(() => []);
     state.pipeRngState = rng;
@@ -435,7 +385,7 @@
   }
 
   function stepSimulation() {
-    const config = state.config;
+    const config = state.data.metadata.config;
     if (state.simEnded) return;
 
     if (state.pipes[state.pipes.length - 1].x < config.world_width - config.pipe_spacing) {
@@ -448,7 +398,7 @@
 
       const inputs = normalizeInputs(bird, state.pipes, config);
       const output = activateGenome(bird.genomeJson, inputs)[0] || 0;
-      const flap = decideFlap(output, state.data?.metadata?.flap_policy, bird.isFlapping, config);
+      const flap = decideFlap(output, state.data.metadata.flap_policy, bird.isFlapping, config);
       bird.isFlapping = flap;
 
       if (bird.flapCooldown > 0) bird.flapCooldown -= 1;
@@ -509,7 +459,7 @@
   }
 
   function updateStats(generation) {
-    const total = state.generations.length;
+    const total = state.data.generations.length;
     const visibleBirds = state.showChampionOnly ? Math.min(state.birds.length, 1) : state.birds.length;
     const alive = state.birds.filter((bird) => bird.alive).length;
     statGeneration.textContent = `${state.generationIndex + 1} / ${total}`;
@@ -519,37 +469,6 @@
     statBestAll.textContent = String(state.bestPipesAllTime);
     statPlayback.textContent = `${state.autoplayIntervalMs} ms/gen`;
     statSeed.textContent = String(generation.pipe_seed);
-  }
-
-  function renderSpeciesLegend() {
-    if (!speciesLegend) return;
-    const aliveCounts = new Map();
-    for (let i = 0; i < state.birds.length; i += 1) {
-      const bird = state.birds[i];
-      const sid = Number(bird.speciesId || 0);
-      if (!aliveCounts.has(sid)) aliveCounts.set(sid, { alive: 0, total: 0 });
-      const entry = aliveCounts.get(sid);
-      entry.total += 1;
-      if (bird.alive) entry.alive += 1;
-    }
-    const rows = [...aliveCounts.entries()]
-      .sort((a, b) => a[0] - b[0])
-      .map(([sid, counts]) => {
-        const color = getSpeciesColor(sid);
-        return `<div class="legend-item"><span class="legend-swatch" style="background:${color}"></span><span>Species ${sid}: ${counts.alive}/${counts.total} alive</span></div>`;
-      });
-    speciesLegend.innerHTML = rows.join("") || "No species data.";
-  }
-
-  function renderDebugInfo() {
-    if (!viewerDebugPanel) return;
-    viewerDebugPanel.hidden = !state.showDebug;
-    if (!state.showDebug) return;
-    viewerDebugPanel.textContent = [
-      `URL: ${state.evolutionUrl}`,
-      `Total generations: ${state.generations.length}`,
-      `Top-level keys: ${state.topLevelKeys.join(", ") || "(none)"}`,
-    ].join("\n");
   }
 
   function render() {
@@ -592,8 +511,6 @@
     }
 
     updateStats(generation);
-    renderSpeciesLegend();
-    renderDebugInfo();
 
     const topFive = [...state.birds]
       .sort((a, b) => (a.rank - b.rank))
@@ -699,12 +616,10 @@
       }
 
       state.data = data;
-      state.generations = generations;
-      state.config = viewerConfig;
-      state.bestPipesAllTime = computeBestPipesAllTime({ generations: state.generations });
+      state.bestPipesAllTime = computeBestPipesAllTime(data);
       generationSlider.min = "0";
-      generationSlider.max = String(state.generations.length - 1);
-      setStatus(`Loaded ${state.generations.length} generations from ${url}.`);
+      generationSlider.max = String(data.generations.length - 1);
+      setStatus(`Loaded ${data.generations.length} generations from evolution.json.`);
       loadGeneration(0);
     } catch (error) {
       showError(`Unexpected error while loading ${url}: ${error.message}`);
