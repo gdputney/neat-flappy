@@ -151,7 +151,7 @@
   }
 
   function drawBackground() {
-    const sky = ctx.createLinearGradient(0, 0, 0, canvas.height);
+    const sky = ctx.createLinearGradient(0, 0, 0, state.worldHeight);
     sky.addColorStop(0, "#7bc8ff");
     sky.addColorStop(1, "#c6f0ff");
     ctx.fillStyle = sky;

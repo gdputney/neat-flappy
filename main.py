@@ -497,6 +497,15 @@ def simulate_genome(
                     "pipes_passed": pipes_passed,
                     "next_pipe": next_pipe_index,
                     "out": output,
+                    "pipes": [
+                        {
+                            "x": pipe.x,
+                            "width": pipe.width,
+                            "gap_y": (pipe.top + pipe.bottom) / 2.0,
+                            "gap_h": pipe.bottom - pipe.top,
+                        }
+                        for pipe in pipes[:4]
+                    ],
                 }
             )
         steps += 1
