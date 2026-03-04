@@ -37,11 +37,20 @@ class TrainingReplayExportTests(unittest.TestCase):
         self.assertTrue(created, "expected a new run directory")
         run_dir = runs_dir / created[-1]
 
-        replay_path = run_dir / "web" / "training_replay.json"
+        replay_path = repo_root / "web" / "training_replay.json"
         self.assertTrue(replay_path.exists())
 
         payload = json.loads(replay_path.read_text(encoding="utf-8"))
         self.assertEqual(2, len(payload.get("generations", [])))
+
+        first_generation = payload.get("generations", [{}])[0]
+        first_genome = (first_generation.get("genomes") or [{}])[0]
+        first_frame = (first_genome.get("frames") or [{}])[0]
+        frame_pipes = first_frame.get("pipes") or []
+        self.assertGreater(len(frame_pipes), 0, "expected at least one pipe in first replay frame")
+        self.assertIn("x", frame_pipes[0])
+        self.assertIn("gap_y", frame_pipes[0])
+        self.assertIn("gap_h", frame_pipes[0])
 
         for generation in payload.get("generations", []):
             genomes = generation.get("genomes", [])
