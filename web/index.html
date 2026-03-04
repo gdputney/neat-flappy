@@ -151,6 +151,14 @@
         font-size: 0.86rem;
         color: #d1d5db;
       }
+      #generationDebugLine {
+        margin-top: 8px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+        font-size: 0.74rem;
+        color: #cbd5e1;
+        line-height: 1.35;
+        white-space: normal;
+      }
       @media (max-width: 680px) {
         body { padding: 8px; }
         .overlay {
@@ -223,6 +231,7 @@
           </section>
         </aside>
       </div>
+      <div id="generationDebugLine" aria-live="polite">genIdx=0 | genNum=0 | rank=- | fit=- | pipes(max/mean)=-/- | seed=-</div>
       <div id="rankingList"></div>
     </div>
     <script src="viewer.js"></script>

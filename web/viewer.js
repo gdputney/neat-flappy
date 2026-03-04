@@ -34,10 +34,16 @@
   const statCurriculumSpeed = document.getElementById("statCurriculumSpeed");
   const statCurriculumSpacing = document.getElementById("statCurriculumSpacing");
   const milestoneBanner = document.getElementById("milestoneBanner");
+  const generationDebugLine = document.getElementById("generationDebugLine");
 
   const state = {
     data: null,
     generationIndex: 0,
+    generationNumberToIndex: new Map(),
+    availableGenerationNumbers: [],
+    currentGenerationNumber: 0,
+    currentGenObj: null,
+    currentRank: null,
     playing: true,
     autoplayEnabled: true,
     stepAccumulator: 0,
@@ -350,18 +356,28 @@
     if (!state.data) return;
     const total = state.data.generations.length;
     const next = (state.generationIndex + delta + total) % total;
-    loadGeneration(next);
+    loadGenerationByIndex(next);
   }
 
-  function loadGeneration(generationIdx, options = {}) {
+  function getGenerationNumber(generation, fallbackIndex) {
+    if (!generation) return fallbackIndex;
+    const parsed = Number(generation.generation);
+    return Number.isFinite(parsed) ? parsed : fallbackIndex;
+  }
+
+  function loadGenerationByIndex(generationIdx, options = {}) {
     const generation = state.data.generations[generationIdx];
+    if (!generation) return;
     const config = state.data.metadata.config;
     const previousDifficulty = state.currentDifficulty;
     const nextDifficulty = getGenerationDifficulty(generation);
     const seed32 = Number(BigInt(generation.pipe_seed) & BigInt(0xffffffff));
     const rng = mulberry32(seed32);
+    const generationNumber = getGenerationNumber(generation, generationIdx);
 
+    state.currentGenObj = generation;
     state.generationIndex = generationIdx;
+    state.currentGenerationNumber = generationNumber;
     state.maxSteps = Number(config.max_steps) || 5000;
     state.step = 0;
     state.generationDone = false;
@@ -390,6 +406,7 @@
       activations: null,
       flapDecision: false,
     };
+    state.currentRank = state.brainView.championBird ? Number(state.brainView.championBird.rank ?? 1) : null;
     state.currentDifficulty = nextDifficulty;
     if (options.clearBanner !== false) {
       clearMilestoneBanner();
@@ -399,6 +416,12 @@
     }
     generationSlider.value = String(generationIdx);
     render();
+  }
+
+  function loadGenerationByNumber(generationNumber, options = {}) {
+    const generationIdx = state.generationNumberToIndex.get(Number(generationNumber));
+    if (!Number.isInteger(generationIdx)) return;
+    loadGenerationByIndex(generationIdx, options);
   }
 
   function formatNumber(value) {
@@ -597,6 +620,7 @@
       bird.isFlapping = flap;
 
       if (!state.brainView.championBird || bird.rank === 1 || (state.birds.length === 1 && i === 0)) {
+        state.currentRank = Number(bird.rank ?? state.currentRank ?? 1);
         state.brainView = {
           championBird: bird,
           inputs,
@@ -668,7 +692,7 @@
     const total = state.data.generations.length;
     const visibleBirds = state.showChampionOnly ? Math.min(state.birds.length, 1) : state.birds.length;
     const alive = state.birds.filter((bird) => bird.alive).length;
-    statGeneration.textContent = `${state.generationIndex + 1} / ${total}`;
+    statGeneration.textContent = `${state.currentGenerationNumber} (idx ${state.generationIndex}, total ${total})`;
     statBirdsShown.textContent = String(visibleBirds);
     statAlive.textContent = `${alive} / ${state.birds.length}`;
     statBestGen.textContent = String(getChampionPipes(generation));
@@ -681,10 +705,21 @@
     statCurriculumGap.textContent = Number.isFinite(difficulty.gap) ? difficulty.gap.toFixed(1) : "-";
     statCurriculumSpeed.textContent = Number.isFinite(difficulty.speed) ? difficulty.speed.toFixed(2) : "-";
     statCurriculumSpacing.textContent = Number.isFinite(difficulty.spacing) ? difficulty.spacing.toFixed(1) : "-";
+
+    const highlightedRank = state.currentRank ?? "-";
+    const highlightedGenome = generation.genomes.find((entry) => Number(entry.rank) === Number(highlightedRank)) || generation.genomes[0] || null;
+    generationDebugLine.textContent = [
+      `genIdx=${state.generationIndex}`,
+      `genNum=${state.currentGenerationNumber}`,
+      `rank=${highlightedRank}`,
+      `fit=${highlightedGenome ? Number(highlightedGenome.fitness ?? 0).toFixed(3) : "-"}`,
+      `pipes(max/mean)=${highlightedGenome ? `${Number(highlightedGenome.pipes_passed_max ?? 0)}/${Number(highlightedGenome.pipes_passed_mean ?? 0).toFixed(3)}` : "-/-"}`,
+      `seed=${generation.pipe_seed ?? "-"}`,
+    ].join(" | ");
   }
 
   function render() {
-    const generation = state.data?.generations?.[state.generationIndex];
+    const generation = state.currentGenObj;
     if (!generation) return;
     const config = state.data.metadata.config;
 
@@ -758,7 +793,7 @@
           state.autoplayEnabled = false;
           autoplayToggle.checked = false;
         } else {
-          loadGeneration(state.generationIndex + 1, { triggerMilestoneBanner: true, clearBanner: false });
+          loadGenerationByIndex(state.generationIndex + 1, { triggerMilestoneBanner: true, clearBanner: false });
         }
       }
     }
@@ -777,12 +812,12 @@
       state.autoplayEnabled = Boolean(event.target.checked);
     });
 
-    prevGenBtn.addEventListener("click", () => loadGeneration((state.generationIndex - 1 + state.data.generations.length) % state.data.generations.length, { clearBanner: true }));
-    nextGenBtn.addEventListener("click", () => loadGeneration((state.generationIndex + 1) % state.data.generations.length, { clearBanner: true }));
+    prevGenBtn.addEventListener("click", () => loadGenerationByIndex((state.generationIndex - 1 + state.data.generations.length) % state.data.generations.length, { clearBanner: true }));
+    nextGenBtn.addEventListener("click", () => loadGenerationByIndex((state.generationIndex + 1) % state.data.generations.length, { clearBanner: true }));
 
     generationSlider.addEventListener("input", (event) => {
       if (!state.data) return;
-      loadGeneration(Number(event.target.value) || 0, { clearBanner: true });
+      loadGenerationByIndex(Number(event.target.value) || 0, { clearBanner: true });
     });
 
     speedSlider.addEventListener("input", (event) => {
@@ -819,12 +854,23 @@
         throw new Error("No generations in evolution.json");
       }
       state.data = data;
+      state.generationNumberToIndex = new Map();
+      state.availableGenerationNumbers = [];
+      for (let i = 0; i < data.generations.length; i += 1) {
+        const generationNumber = getGenerationNumber(data.generations[i], i);
+        state.availableGenerationNumbers.push(generationNumber);
+        state.generationNumberToIndex.set(generationNumber, i);
+      }
       state.bestPipesAllTime = computeBestPipesAllTime(data);
       generationSlider.min = "0";
       generationSlider.max = String(data.generations.length - 1);
       setStatus(`Loaded ${data.generations.length} generations from evolution.json.`);
       state.simSpeedMultiplier = clamp((Number(speedSlider.value) || 1500) / 1000, 0.5, 3);
-      loadGeneration(0, { clearBanner: true });
+      if (state.generationNumberToIndex.has(0)) {
+        loadGenerationByNumber(0, { clearBanner: true });
+      } else {
+        loadGenerationByIndex(0, { clearBanner: true });
+      }
     } catch (error) {
       setStatus(`Failed to load evolution.json: ${error.message}`);
       console.error(error);
