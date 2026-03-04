@@ -32,6 +32,7 @@ Useful options:
 - `--deterministic-pipes` to force the same per-generation pipe sequence across all genomes.
 - `--flap-policy {probabilistic,hysteresis,deterministic}` to choose stochastic vs thresholded flap control.
 - `--population-size <int>` to set the number of genomes per generation (default `100`).
+- `--generations <int>` to set how many generations to evolve (default `10`).
 - `--target-species <int>` and `--compatibility-adjust-step <float>` to tune speciation threshold adaptation (`8` and `0.02` by default).
 - `--csv` to additionally save `fitness.csv` in the run folder.
 - `--plot` to save `fitness_over_generations.png` in the run folder (requires `matplotlib`).
