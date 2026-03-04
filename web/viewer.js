@@ -6,6 +6,7 @@
   const nextGenBtn = document.getElementById("nextGenBtn");
   const generationSlider = document.getElementById("generationSlider");
   const speedSlider = document.getElementById("speedSlider");
+  const autoplayToggle = document.getElementById("autoplayToggle");
   const trailToggle = document.getElementById("trailToggle");
   const championOnlyToggle = document.getElementById("championOnlyToggle");
   const debugToggle = document.getElementById("debugToggle");
@@ -32,10 +33,11 @@
     data: null,
     generationIndex: 0,
     playing: true,
+    autoplayEnabled: true,
     stepAccumulator: 0,
     lastTimestamp: 0,
     maxSteps: 5000,
-    simEnded: false,
+    generationDone: false,
     pipes: [],
     birds: [],
     nextPipeIndexPerBird: [],
@@ -47,8 +49,7 @@
     showBrain: false,
     trailHistory: [],
     step: 0,
-    autoplayIntervalMs: 1500,
-    autoplayElapsedMs: 0,
+    simSpeedMultiplier: 1.5,
     bestPipesAllTime: 0,
     renderTimeMs: 0,
     runtimeCache: new WeakMap(),
@@ -319,12 +320,11 @@
     const rng = mulberry32(seed32);
 
     state.generationIndex = generationIdx;
-    state.maxSteps = config.max_steps;
+    state.maxSteps = Number(config.max_steps) || 5000;
     state.step = 0;
-    state.simEnded = false;
+    state.generationDone = false;
     state.bestScore = 0;
     state.stepAccumulator = 0;
-    state.autoplayElapsedMs = 0;
     state.pipes = [createPipe(rng, config.first_pipe_x, config)];
     state.birds = generation.genomes.map((entry, i) => ({
       rank: entry.rank,
@@ -524,7 +524,7 @@
 
   function stepSimulation() {
     const config = state.data.metadata.config;
-    if (state.simEnded) return;
+    if (state.generationDone) return;
 
     if (state.pipes[state.pipes.length - 1].x < config.world_width - config.pipe_spacing) {
       state.pipes.push(createPipe(state.pipeRngState, config.new_pipe_x, config));
@@ -602,9 +602,7 @@
 
     state.step += 1;
     const aliveCount = state.birds.filter((bird) => bird.alive).length;
-    if (aliveCount === 0 || state.step >= state.maxSteps) {
-      state.simEnded = true;
-    }
+    state.generationDone = aliveCount === 0 || state.step >= state.maxSteps;
   }
 
   function updateStats(generation) {
@@ -616,7 +614,7 @@
     statAlive.textContent = `${alive} / ${state.birds.length}`;
     statBestGen.textContent = String(getChampionPipes(generation));
     statBestAll.textContent = String(state.bestPipesAllTime);
-    statPlayback.textContent = `${state.autoplayIntervalMs} ms/gen`;
+    statPlayback.textContent = state.autoplayEnabled ? "ON (sequential)" : "OFF";
     statSeed.textContent = String(generation.pipe_seed);
   }
 
@@ -677,17 +675,21 @@
     state.renderTimeMs += deltaMs;
 
     if (state.data) {
-      state.stepAccumulator += (deltaMs / 1000) * 60;
-      while (state.stepAccumulator >= 1) {
-        state.stepAccumulator -= 1;
-        stepSimulation();
+      if (state.playing) {
+        state.stepAccumulator += ((deltaMs / 1000) * 60) * state.simSpeedMultiplier;
+        while (state.stepAccumulator >= 1) {
+          state.stepAccumulator -= 1;
+          stepSimulation();
+        }
       }
 
-      if (state.playing) {
-        state.autoplayElapsedMs += deltaMs;
-        const interval = state.simEnded ? Math.min(450, state.autoplayIntervalMs) : state.autoplayIntervalMs;
-        if (state.autoplayElapsedMs >= interval) {
-          advanceGeneration(1);
+      if (state.playing && state.autoplayEnabled && state.generationDone) {
+        const atLastGeneration = state.generationIndex >= state.data.generations.length - 1;
+        if (atLastGeneration) {
+          state.autoplayEnabled = false;
+          autoplayToggle.checked = false;
+        } else {
+          loadGeneration(state.generationIndex + 1);
         }
       }
     }
@@ -699,7 +701,11 @@
   function attachControls() {
     playPauseBtn.addEventListener("click", () => {
       state.playing = !state.playing;
-      playPauseBtn.textContent = state.playing ? "Pause autoplay" : "Play autoplay";
+      playPauseBtn.textContent = state.playing ? "Pause sim" : "Play sim";
+    });
+
+    autoplayToggle.addEventListener("change", (event) => {
+      state.autoplayEnabled = Boolean(event.target.checked);
     });
 
     prevGenBtn.addEventListener("click", () => advanceGeneration(-1));
@@ -711,9 +717,7 @@
     });
 
     speedSlider.addEventListener("input", (event) => {
-      state.autoplayIntervalMs = clamp(Number(event.target.value) || 1500, 500, 3000);
-      state.autoplayElapsedMs = 0;
-      statPlayback.textContent = `${state.autoplayIntervalMs} ms/gen`;
+      state.simSpeedMultiplier = clamp((Number(event.target.value) || 1500) / 1000, 0.5, 3);
     });
 
     trailToggle.addEventListener("change", (event) => {
@@ -750,6 +754,7 @@
       generationSlider.min = "0";
       generationSlider.max = String(data.generations.length - 1);
       setStatus(`Loaded ${data.generations.length} generations from evolution.json.`);
+      state.simSpeedMultiplier = clamp((Number(speedSlider.value) || 1500) / 1000, 0.5, 3);
       loadGeneration(0);
     } catch (error) {
       setStatus(`Failed to load evolution.json: ${error.message}`);

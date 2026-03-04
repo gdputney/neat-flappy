@@ -155,21 +155,23 @@
             <div>Alive count: <b id="statAlive">0</b></div>
             <div>Best pipes (gen): <b id="statBestGen">0</b></div>
             <div>Best pipes (all-time): <b id="statBestAll">0</b></div>
-            <div>Playback: <b id="statPlayback">1500 ms/gen</b></div>
+            <div>Autoplay: <b id="statPlayback">ON (sequential)</b></div>
             <div style="grid-column: 1 / -1;">Deterministic seed: <b id="statSeed">-</b></div>
           </div>
 
           <div class="controls">
             <div class="row">
               <button id="prevGenBtn" type="button">◀ Prev</button>
-              <button id="playPauseBtn" type="button">Pause autoplay</button>
+              <button id="playPauseBtn" type="button">Pause sim</button>
               <button id="nextGenBtn" type="button">Next ▶</button>
             </div>
+
+            <label class="toggle"><input id="autoplayToggle" type="checkbox" checked /> Sequential autoplay</label>
 
             <label for="generationSlider">Generation scrubber</label>
             <input id="generationSlider" type="range" min="0" max="0" value="0" step="1" />
 
-            <label for="speedSlider">Autoplay interval</label>
+            <label for="speedSlider">Simulation speed</label>
             <input id="speedSlider" type="range" min="500" max="3000" value="1500" step="100" />
 
             <div class="row">
