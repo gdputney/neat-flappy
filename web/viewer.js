@@ -9,8 +9,16 @@
   const trailToggle = document.getElementById("trailToggle");
   const championOnlyToggle = document.getElementById("championOnlyToggle");
   const debugToggle = document.getElementById("debugToggle");
+  const showBrainToggle = document.getElementById("showBrainToggle");
   const statusEl = document.getElementById("status");
   const rankingList = document.getElementById("rankingList");
+  const brainPanel = document.getElementById("brainPanel");
+  const brainInputsEl = document.getElementById("brainInputs");
+  const brainOutputEl = document.getElementById("brainOutput");
+  const brainDecisionEl = document.getElementById("brainDecision");
+  const brainFlapStateEl = document.getElementById("brainFlapState");
+  const brainCanvas = document.getElementById("brainCanvas");
+  const brainCtx = brainCanvas.getContext("2d");
 
   const statGeneration = document.getElementById("statGeneration");
   const statBirdsShown = document.getElementById("statBirdsShown");
@@ -36,12 +44,21 @@
     showTrails: false,
     showChampionOnly: false,
     showDebug: false,
+    showBrain: false,
     trailHistory: [],
     step: 0,
     autoplayIntervalMs: 1500,
     autoplayElapsedMs: 0,
     bestPipesAllTime: 0,
     renderTimeMs: 0,
+    runtimeCache: new WeakMap(),
+    brainView: {
+      championBird: null,
+      inputs: null,
+      outputs: null,
+      activations: null,
+      flapDecision: false,
+    },
     clouds: [
       { x: 30, y: 72, speed: 4, scale: 1.0, alpha: 0.2 },
       { x: 200, y: 120, speed: 7, scale: 1.35, alpha: 0.17 },
@@ -49,6 +66,15 @@
       { x: 140, y: 190, speed: 5, scale: 1.15, alpha: 0.14 },
     ],
   };
+
+  const INPUT_LABELS = [
+    "y_norm",
+    "velocity_norm",
+    "dx_to_next_pipe_norm",
+    "gap_error_norm",
+    "dy_to_gap_top_norm",
+    "dy_to_gap_bottom_norm",
+  ];
 
   function setStatus(text) {
     statusEl.textContent = text;
@@ -95,59 +121,153 @@
     return [yNorm, velocityNorm, dxNorm, gapErrorNorm, dyTopNorm, dyBottomNorm];
   }
 
-  function activateGenome(genomeJson, inputs) {
-    const nodes = genomeJson.node_genes || [];
-    const edges = (genomeJson.connection_genes || []).filter((edge) => edge.enabled !== false);
-    const inputNodes = nodes.filter((n) => n.type === "input");
-    const outputNodes = nodes.filter((n) => n.type === "output");
-    const nodeLookup = new Map(nodes.map((n) => [Number(n.id), n]));
-    const indegree = new Map(nodes.map((n) => [Number(n.id), 0]));
-    const outgoing = new Map(nodes.map((n) => [Number(n.id), []]));
-    const incoming = new Map(nodes.map((n) => [Number(n.id), []]));
-
+  function computeTopoOrder(nodeIds, edges) {
+    const indegree = new Map(nodeIds.map((id) => [id, 0]));
+    const outgoing = new Map(nodeIds.map((id) => [id, []]));
     for (const edge of edges) {
       const inNode = Number(edge.in_node);
       const outNode = Number(edge.out_node);
       indegree.set(outNode, (indegree.get(outNode) || 0) + 1);
-      outgoing.get(inNode)?.push(edge);
-      incoming.get(outNode)?.push(edge);
+      outgoing.get(inNode)?.push(outNode);
     }
-
     const queue = [...indegree.entries()].filter(([, d]) => d === 0).map(([id]) => id);
     const topo = [];
     while (queue.length) {
       const current = queue.shift();
       topo.push(current);
-      for (const edge of outgoing.get(current) || []) {
-        const outNode = Number(edge.out_node);
+      for (const outNode of outgoing.get(current) || []) {
         indegree.set(outNode, (indegree.get(outNode) || 0) - 1);
-        if ((indegree.get(outNode) || 0) === 0) {
-          queue.push(outNode);
+        if ((indegree.get(outNode) || 0) === 0) queue.push(outNode);
+      }
+    }
+    return { topo, cyclic: topo.length !== nodeIds.length };
+  }
+
+  function getGenomeRuntime(genomeJson) {
+    if (state.runtimeCache.has(genomeJson)) {
+      return state.runtimeCache.get(genomeJson);
+    }
+
+    const nodes = genomeJson.node_genes || [];
+    const nodeIds = nodes.map((n) => Number(n.id));
+    const nodeTypes = nodes.map((n) => String(n.type || "hidden"));
+    const biases = new Float64Array(nodes.map((n) => Number(n.bias || 0.0)));
+    const idToIndex = new Map(nodeIds.map((id, idx) => [id, idx]));
+    const inputNodeIndices = [];
+    const outputNodeIndices = [];
+    const hiddenNodeIndices = [];
+
+    for (let i = 0; i < nodes.length; i += 1) {
+      const type = nodeTypes[i];
+      if (type === "input") inputNodeIndices.push(i);
+      else if (type === "output") outputNodeIndices.push(i);
+      else hiddenNodeIndices.push(i);
+    }
+
+    const allConnections = (genomeJson.connection_genes || []).map((edge) => ({
+      inIndex: idToIndex.get(Number(edge.in_node)),
+      outIndex: idToIndex.get(Number(edge.out_node)),
+      weight: Number(edge.weight || 0.0),
+      enabled: edge.enabled !== false,
+    })).filter((edge) => Number.isInteger(edge.inIndex) && Number.isInteger(edge.outIndex));
+
+    const enabledConnections = allConnections.filter((edge) => edge.enabled);
+    const incomingEnabled = Array.from({ length: nodes.length }, () => []);
+    for (const edge of enabledConnections) {
+      incomingEnabled[edge.outIndex].push(edge);
+    }
+
+    const { topo, cyclic } = computeTopoOrder(nodeIds, enabledConnections.map((edge) => ({
+      in_node: nodeIds[edge.inIndex],
+      out_node: nodeIds[edge.outIndex],
+    })));
+    const evalOrder = cyclic
+      ? [...hiddenNodeIndices, ...outputNodeIndices]
+      : topo.map((id) => idToIndex.get(id)).filter((idx) => idx !== undefined && nodeTypes[idx] !== "input");
+
+    const layout = computeBrainLayout(nodeTypes, inputNodeIndices, hiddenNodeIndices, outputNodeIndices);
+    const runtime = {
+      nodeTypes,
+      nodeIds,
+      inputNodeIndices,
+      outputNodeIndices,
+      biases,
+      incomingEnabled,
+      evalOrder,
+      cyclic,
+      relaxationIterations: 4,
+      valuesA: new Float64Array(nodes.length),
+      valuesB: new Float64Array(nodes.length),
+      outputBuffer: new Float64Array(outputNodeIndices.length),
+      allConnections,
+      layout,
+    };
+    state.runtimeCache.set(genomeJson, runtime);
+    return runtime;
+  }
+
+  function evaluateRuntime(runtime, inputs) {
+    const valuesA = runtime.valuesA;
+    const valuesB = runtime.valuesB;
+    valuesA.fill(0);
+    for (let i = 0; i < runtime.inputNodeIndices.length; i += 1) {
+      valuesA[runtime.inputNodeIndices[i]] = Number(inputs[i] ?? 0.0);
+    }
+
+    if (!runtime.cyclic) {
+      for (const nodeIndex of runtime.evalOrder) {
+        let weightedSum = runtime.biases[nodeIndex];
+        for (const edge of runtime.incomingEnabled[nodeIndex]) {
+          weightedSum += edge.weight * valuesA[edge.inIndex];
         }
+        valuesA[nodeIndex] = sigmoid(weightedSum);
+      }
+    } else {
+      valuesB.set(valuesA);
+      for (let iter = 0; iter < runtime.relaxationIterations; iter += 1) {
+        for (const nodeIndex of runtime.evalOrder) {
+          let weightedSum = runtime.biases[nodeIndex];
+          for (const edge of runtime.incomingEnabled[nodeIndex]) {
+            weightedSum += edge.weight * valuesA[edge.inIndex];
+          }
+          valuesB[nodeIndex] = sigmoid(weightedSum);
+        }
+        for (const inputIdx of runtime.inputNodeIndices) {
+          valuesB[inputIdx] = valuesA[inputIdx];
+        }
+        valuesA.set(valuesB);
       }
     }
 
-    for (const node of nodes) {
-      const nodeId = Number(node.id);
-      if (!topo.includes(nodeId)) {
-        topo.push(nodeId);
-      }
+    for (let i = 0; i < runtime.outputNodeIndices.length; i += 1) {
+      runtime.outputBuffer[i] = valuesA[runtime.outputNodeIndices[i]];
     }
+    return {
+      outputs: runtime.outputBuffer,
+      activations: valuesA,
+    };
+  }
 
-    const values = new Map(nodes.map((n) => [Number(n.id), 0.0]));
-    inputNodes.forEach((node, i) => values.set(Number(node.id), Number(inputs[i] ?? 0.0)));
-    for (const nodeId of topo) {
-      const node = nodeLookup.get(nodeId);
-      if (!node || node.type === "input") {
-        continue;
+  function computeBrainLayout(nodeTypes, inputNodeIndices, hiddenNodeIndices, outputNodeIndices) {
+    const width = brainCanvas.width;
+    const height = brainCanvas.height;
+    const placeColumn = (indices, x) => {
+      const positions = new Map();
+      if (!indices.length) return positions;
+      const step = height / (indices.length + 1);
+      for (let i = 0; i < indices.length; i += 1) {
+        positions.set(indices[i], { x, y: step * (i + 1) });
       }
-      let weightedSum = Number(node.bias || 0.0);
-      for (const edge of incoming.get(nodeId) || []) {
-        weightedSum += Number(edge.weight || 0.0) * Number(values.get(Number(edge.in_node)) || 0.0);
-      }
-      values.set(nodeId, sigmoid(weightedSum));
+      return positions;
+    };
+    const byInput = placeColumn(inputNodeIndices, 52);
+    const byHidden = placeColumn(hiddenNodeIndices, width / 2);
+    const byOutput = placeColumn(outputNodeIndices, width - 52);
+    const positions = Array.from({ length: nodeTypes.length }, () => ({ x: width / 2, y: height / 2 }));
+    for (let i = 0; i < positions.length; i += 1) {
+      positions[i] = byInput.get(i) || byHidden.get(i) || byOutput.get(i) || { x: width / 2, y: height / 2 };
     }
-    return outputNodes.map((node) => Number(values.get(Number(node.id)) || 0.0));
+    return positions;
   }
 
   function decideFlap(output, policy, isFlapping, config) {
@@ -216,12 +336,76 @@
       alive: true,
       score: 0,
       color: `hsla(${Math.round((i * 360) / Math.max(1, generation.genomes.length))}, 85%, 52%, 0.72)`,
+      runtime: getGenomeRuntime(entry.genome_json),
     }));
     state.nextPipeIndexPerBird = state.birds.map(() => 0);
     state.trailHistory = state.birds.map(() => []);
     state.pipeRngState = rng;
+    state.brainView = {
+      championBird: state.birds.find((bird) => bird.rank === 1) || state.birds[0] || null,
+      inputs: null,
+      outputs: null,
+      activations: null,
+      flapDecision: false,
+    };
     generationSlider.value = String(generationIdx);
     render();
+  }
+
+  function formatNumber(value) {
+    return Number.isFinite(value) ? value.toFixed(3) : "-";
+  }
+
+  function activationToFill(value, type) {
+    const normalized = type === "input" ? clamp((value + 1) / 2, 0, 1) : clamp(value, 0, 1);
+    const lightness = Math.round(20 + (normalized * 60));
+    return `hsl(195 80% ${lightness}%)`;
+  }
+
+  function drawBrainOverlay() {
+    if (!state.showBrain) return;
+    const { championBird, inputs, outputs, activations } = state.brainView;
+    if (!championBird || !championBird.runtime || !inputs || !outputs || !activations) return;
+    const runtime = championBird.runtime;
+
+    brainInputsEl.innerHTML = INPUT_LABELS.map((label, i) => (
+      `<div>${label}: <b>${formatNumber(inputs[i])}</b></div>`
+    )).join("");
+    const primaryOutput = Number(outputs[0] || 0.0);
+    brainOutputEl.textContent = formatNumber(primaryOutput);
+    brainDecisionEl.textContent = `${state.brainView.flapDecision ? "flap" : "no flap"} (${primaryOutput >= 0.5 ? ">=0.5" : "<0.5"})`;
+    brainFlapStateEl.textContent = `cooldown=${championBird.flapCooldown}, hysteresis=${championBird.isFlapping ? "on" : "off"}`;
+
+    brainCtx.clearRect(0, 0, brainCanvas.width, brainCanvas.height);
+    for (const edge of runtime.allConnections) {
+      const a = runtime.layout[edge.inIndex];
+      const b = runtime.layout[edge.outIndex];
+      brainCtx.beginPath();
+      brainCtx.moveTo(a.x, a.y);
+      brainCtx.lineTo(b.x, b.y);
+      const thickness = 0.6 + (Math.min(Math.abs(edge.weight), 2.5) * 0.9);
+      brainCtx.lineWidth = edge.enabled ? thickness : 1;
+      brainCtx.setLineDash(edge.enabled ? [] : [4, 4]);
+      const alpha = edge.enabled ? 0.42 : 0.18;
+      brainCtx.strokeStyle = edge.weight >= 0
+        ? `rgba(56, 189, 248, ${alpha})`
+        : `rgba(248, 113, 113, ${alpha})`;
+      brainCtx.stroke();
+    }
+    brainCtx.setLineDash([]);
+
+    for (let i = 0; i < runtime.layout.length; i += 1) {
+      const p = runtime.layout[i];
+      const value = activations[i];
+      const type = runtime.nodeTypes[i];
+      brainCtx.beginPath();
+      brainCtx.fillStyle = activationToFill(value, type);
+      brainCtx.strokeStyle = type === "output" ? "#fef08a" : "rgba(203, 213, 225, 0.9)";
+      brainCtx.lineWidth = type === "output" ? 2 : 1;
+      brainCtx.arc(p.x, p.y, 9, 0, Math.PI * 2);
+      brainCtx.fill();
+      brainCtx.stroke();
+    }
   }
 
   function drawBackground() {
@@ -351,9 +535,20 @@
       if (!bird.alive) continue;
 
       const inputs = normalizeInputs(bird, state.pipes, config);
-      const output = activateGenome(bird.genomeJson, inputs)[0] || 0;
+      const { outputs, activations } = evaluateRuntime(bird.runtime, inputs);
+      const output = Number(outputs[0] || 0);
       const flap = decideFlap(output, state.data.metadata.flap_policy, bird.isFlapping, config);
       bird.isFlapping = flap;
+
+      if (!state.brainView.championBird || bird.rank === 1 || (state.birds.length === 1 && i === 0)) {
+        state.brainView = {
+          championBird: bird,
+          inputs,
+          outputs,
+          activations,
+          flapDecision: flap,
+        };
+      }
 
       if (bird.flapCooldown > 0) bird.flapCooldown -= 1;
       if (flap && bird.flapCooldown === 0) {
@@ -472,6 +667,7 @@
       .map((bird) => `#${bird.rank}: ${bird.score}${bird.alive ? "" : " ✖"}`)
       .join(" | ");
     rankingList.textContent = `Top scores: ${topFive}`;
+    drawBrainOverlay();
   }
 
   function animate(timestamp) {
@@ -533,6 +729,11 @@
 
     debugToggle.addEventListener("change", (event) => {
       state.showDebug = Boolean(event.target.checked);
+    });
+
+    showBrainToggle.addEventListener("change", (event) => {
+      state.showBrain = Boolean(event.target.checked);
+      brainPanel.hidden = !state.showBrain;
     });
   }
 

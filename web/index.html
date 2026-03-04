@@ -66,6 +66,42 @@
         display: grid;
         gap: 8px;
       }
+      .brain-panel {
+        margin-top: 10px;
+        padding-top: 10px;
+        border-top: 1px solid rgba(148, 163, 184, 0.3);
+      }
+      .brain-panel h2 {
+        margin: 0 0 8px;
+        font-size: 0.9rem;
+      }
+      .brain-grid {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 8px;
+        font-size: 0.8rem;
+      }
+      .brain-metrics {
+        margin: 0;
+        display: grid;
+        gap: 4px;
+      }
+      .brain-metrics div {
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+      }
+      .brain-list {
+        margin: 0;
+        padding-left: 16px;
+      }
+      #brainCanvas {
+        width: 100%;
+        height: auto;
+        border: 1px solid rgba(148, 163, 184, 0.35);
+        border-radius: 8px;
+        background: rgba(2, 6, 23, 0.55);
+      }
       .row {
         display: flex;
         flex-wrap: wrap;
@@ -140,8 +176,22 @@
               <label class="toggle"><input id="trailToggle" type="checkbox" /> Trails</label>
               <label class="toggle"><input id="championOnlyToggle" type="checkbox" /> Champion only</label>
               <label class="toggle"><input id="debugToggle" type="checkbox" /> Debug overlay</label>
+              <label class="toggle"><input id="showBrainToggle" type="checkbox" /> Show Brain</label>
             </div>
           </div>
+
+          <section id="brainPanel" class="brain-panel" hidden aria-live="polite">
+            <h2>Neural Activity (Champion)</h2>
+            <div class="brain-grid">
+              <div id="brainInputs" class="brain-list"></div>
+              <dl class="brain-metrics">
+                <div><dt>Output:</dt><dd id="brainOutput">-</dd></div>
+                <div><dt>Decision:</dt><dd id="brainDecision">-</dd></div>
+                <div><dt>Flap state:</dt><dd id="brainFlapState">-</dd></div>
+              </dl>
+              <canvas id="brainCanvas" width="360" height="220"></canvas>
+            </div>
+          </section>
         </aside>
       </div>
       <div id="rankingList"></div>

@@ -160,7 +160,21 @@ Open `http://localhost:8000/web/` and use the overlay panel to:
 - play/pause autoplay across generations
 - adjust autoplay interval (`500`-`3000` ms per generation)
 - toggle trails, champion-only highlight, and debug overlay labels
+- toggle **Show Brain** to inspect the champion's live neural activations and wiring
 - monitor generation stats (alive birds, current/all-time best pipes, and deterministic pipe seed)
+
+When **Show Brain** is enabled, the neural panel displays the rank-1 genome (or the single replay bird):
+
+- input vector in Python order:
+  1. `y_norm` (bird y centered to `[-1, 1]`)
+  2. `velocity_norm` (bird velocity normalized to `[-1, 1]`)
+  3. `dx_to_next_pipe_norm` (horizontal distance to next pipe in `[0, 1]`)
+  4. `gap_error_norm` (bird offset from gap center in `[-1, 1]`)
+  5. `dy_to_gap_top_norm` (delta to gap top in `[-1, 1]`)
+  6. `dy_to_gap_bottom_norm` (delta to gap bottom in `[-1, 1]`)
+- output activation and current flap decision
+- deterministic flap state details (cooldown counter + hysteresis on/off)
+- node-link diagram where node brightness tracks live activation and edge color/width encodes weight sign/magnitude
 
 ## Visualize a saved genome
 
@@ -171,4 +185,3 @@ python tools/visualize_genome.py runs/run_<timestamp>/best_genome.json
 ```
 
 This writes `best_genome.dot` and `best_genome.png` in the current directory by default.
-
