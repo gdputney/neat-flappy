@@ -148,8 +148,6 @@ Viewer controls include:
 - Show many birds
 - Show Brain (rank 1 only; output is shown as `(not recorded)` if absent in frame data)
 
-Replay frames now include compact per-frame pipe geometry (`pipes: [{x, width, gap_y, gap_h}]`) so the web viewer draws exactly what training recorded without re-simulating pipes.
-
 ## Visualize a saved genome
 
 Generate a DOT + PNG network visualization from a saved best genome:

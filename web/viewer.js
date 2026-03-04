@@ -53,10 +53,6 @@
     birds: [],
     pipes: [],
     trailHistory: [],
-    missingPipeDataWarning: false,
-    worldWidth: 500,
-    worldHeight: 800,
-    birdX: 80,
   };
 
   const setStatus = (text) => { if (els.status) els.status.textContent = text; };
@@ -123,15 +119,11 @@
     });
 
     const selected = getGenomeByRank(generation, state.selectedRank);
-    const selectedFrames = selected?.frames || [];
-    const selectedFrame = selectedFrames[Math.min(frameIndex, Math.max(0, selectedFrames.length - 1))] || {};
-    const framePipes = Array.isArray(selectedFrame.pipes) ? selectedFrame.pipes : [];
-    state.missingPipeDataWarning = framePipes.length === 0;
-    state.pipes = framePipes.map((pipe) => {
+    state.pipes = (selected?.pipes || []).map((pipe) => {
       const halfGap = Number(pipe.gap_h || 0) / 2;
       return {
         x: Number(pipe.x),
-        width: Number(pipe.width || cfg.pipe_width || 70),
+        width: Number(cfg.pipe_width || 70),
         top: Number(pipe.gap_y) - halfGap,
         bottom: Number(pipe.gap_y) + halfGap,
       };
@@ -163,81 +155,24 @@
     sky.addColorStop(0, "#7bc8ff");
     sky.addColorStop(1, "#c6f0ff");
     ctx.fillStyle = sky;
-    ctx.fillRect(0, 0, state.worldWidth, state.worldHeight);
-
-    const groundHeight = 34;
-    const dirt = ctx.createLinearGradient(0, state.worldHeight - groundHeight, 0, state.worldHeight);
-    dirt.addColorStop(0, "#ab7a36");
-    dirt.addColorStop(1, "#7f5522");
-    ctx.fillStyle = "#79b84f";
-    ctx.fillRect(0, state.worldHeight - groundHeight - 8, state.worldWidth, 8);
-    ctx.fillStyle = dirt;
-    ctx.fillRect(0, state.worldHeight - groundHeight, state.worldWidth, groundHeight);
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
   }
 
   function drawPipe(pipe) {
-    const border = 4;
-    const capHeight = 12;
-    const capOverhang = 6;
-
-    const drawSegment = (x, y, width, height) => {
-      ctx.fillStyle = "#2f6f25";
-      ctx.fillRect(x, y, width, height);
-      ctx.fillStyle = "#4ea53f";
-      ctx.fillRect(x + border, y + border, Math.max(0, width - (2 * border)), Math.max(0, height - (2 * border)));
-      ctx.fillStyle = "rgba(255,255,255,0.10)";
-      ctx.fillRect(x + border + 2, y + border, 4, Math.max(0, height - (2 * border)));
-    };
-
-    drawSegment(pipe.x, 0, pipe.width, pipe.top);
-    drawSegment(pipe.x, pipe.bottom, pipe.width, state.worldHeight - pipe.bottom);
-
     ctx.fillStyle = "#2f6f25";
-    ctx.fillRect(pipe.x - capOverhang, pipe.top - capHeight, pipe.width + (2 * capOverhang), capHeight);
-    ctx.fillRect(pipe.x - capOverhang, pipe.bottom, pipe.width + (2 * capOverhang), capHeight);
-    ctx.fillStyle = "#5cbf4c";
-    ctx.fillRect(pipe.x - capOverhang + 2, pipe.top - capHeight + 2, pipe.width + (2 * capOverhang) - 4, capHeight - 4);
-    ctx.fillRect(pipe.x - capOverhang + 2, pipe.bottom + 2, pipe.width + (2 * capOverhang) - 4, capHeight - 4);
+    ctx.fillRect(pipe.x, 0, pipe.width, pipe.top);
+    ctx.fillRect(pipe.x, pipe.bottom, pipe.width, canvas.height - pipe.bottom);
   }
 
   function drawBird(bird, birdIndex) {
-    const x = state.birdX;
-    const flapPhase = (state.renderTimeMs / 100) + (birdIndex * 0.25);
-    const wingLift = bird.flap ? Math.sin(flapPhase) * 4 : 0;
+    const x = Number(state.data?.config?.bird_x || 80);
     ctx.save();
     ctx.translate(x, bird.y);
     ctx.rotate(clamp(bird.velocity * 0.11, -0.65, 0.75));
-
-    ctx.shadowColor = "rgba(0,0,0,0.24)";
-    ctx.shadowBlur = 6;
-    ctx.shadowOffsetY = 2;
-
     ctx.fillStyle = bird.color;
     ctx.beginPath();
-    ctx.moveTo(12, 0);
-    ctx.quadraticCurveTo(5, -8, -8, -6);
-    ctx.quadraticCurveTo(-12, 0, -8, 6);
-    ctx.quadraticCurveTo(5, 8, 12, 0);
-    ctx.closePath();
+    ctx.arc(0, 0, 11, 0, Math.PI * 2);
     ctx.fill();
-
-    ctx.shadowBlur = 0;
-    ctx.strokeStyle = "rgba(0,0,0,0.3)";
-    ctx.lineWidth = 1.2;
-    ctx.stroke();
-
-    ctx.strokeStyle = "rgba(255,255,255,0.55)";
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(-2, -1);
-    ctx.lineTo(-9, -5 - wingLift);
-    ctx.stroke();
-
-    ctx.fillStyle = "#fff";
-    ctx.beginPath();
-    ctx.arc(5, -2, 1.8, 0, Math.PI * 2);
-    ctx.fill();
-
     if (bird.rank === 1) {
       ctx.strokeStyle = "#ffd54f";
       ctx.lineWidth = 2;
@@ -271,26 +206,13 @@
     if (els.statPlayback) els.statPlayback.textContent = state.autoplayEnabled ? "ON (sequential)" : "OFF";
 
     if (els.generationDebugLine) {
-      const warning = state.missingPipeDataWarning ? " | WARNING: No pipe data in replay frame; cannot render pipes." : "";
-      els.generationDebugLine.textContent = `genIdx=${state.generationIndex} | genNum=${genNum} | total=${total}${warning}`;
+      els.generationDebugLine.textContent = `genIdx=${state.generationIndex} | genNum=${genNum} | total=${total}`;
     }
 
     if (els.rankingList) {
       const top = getSortedGenomes(generation).slice(0, 5).map((g) => `#${g.rank}: ${g.pipes_passed}`).join(" | ");
       els.rankingList.textContent = `Top pipes: ${top}`;
     }
-  }
-
-  function drawScoreOverlay() {
-    const generation = getGeneration();
-    const selected = getGenomeByRank(generation, state.selectedRank);
-    const selFrame = (selected?.frames || [])[Math.min(state.frameIndex, Math.max(0, (selected?.frames || []).length - 1))] || {};
-    const score = Number(selFrame.pipes_passed ?? 0);
-    ctx.fillStyle = "rgba(15,23,42,0.55)";
-    ctx.fillRect(10, 10, 110, 38);
-    ctx.fillStyle = "#f8fafc";
-    ctx.font = "bold 22px sans-serif";
-    ctx.fillText(String(score), 20, 37);
   }
 
   function drawBrain() {
@@ -320,10 +242,6 @@
 
   function render() {
     if (!state.data) return;
-    ctx.save();
-    const sx = canvas.width / Math.max(1, state.worldWidth);
-    const sy = canvas.height / Math.max(1, state.worldHeight);
-    ctx.scale(sx, sy);
     drawBackground();
     state.pipes.forEach(drawPipe);
     state.birds.forEach((bird, i) => {
@@ -337,8 +255,6 @@
       }
       drawBird(bird, i);
     });
-    drawScoreOverlay();
-    ctx.restore();
     updateStats();
     drawBrain();
   }
@@ -436,9 +352,6 @@
     try {
       const data = await fetchReplay();
       state.data = data;
-      state.worldWidth = Number(data?.config?.world_width || canvas.width);
-      state.worldHeight = Number(data?.config?.world_height || canvas.height);
-      state.birdX = Number(data?.config?.bird_x || 80);
       if (els.generationSlider) {
         els.generationSlider.min = "0";
         els.generationSlider.max = String(Math.max(0, data.generations.length - 1));
