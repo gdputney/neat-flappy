@@ -1,5 +1,9 @@
 (() => {
   const canvas = document.getElementById("simCanvas");
+  if (!canvas) {
+    console.error("viewer.js: missing #simCanvas");
+    return;
+  }
   const ctx = canvas.getContext("2d");
   const playPauseBtn = document.getElementById("playPauseBtn");
   const prevGenBtn = document.getElementById("prevGenBtn");
@@ -21,7 +25,7 @@
   const brainDecisionEl = document.getElementById("brainDecision");
   const brainFlapStateEl = document.getElementById("brainFlapState");
   const brainCanvas = document.getElementById("brainCanvas");
-  const brainCtx = brainCanvas.getContext("2d");
+  const brainCtx = brainCanvas ? brainCanvas.getContext("2d") : null;
 
   const statGeneration = document.getElementById("statGeneration");
   const statBirdsShown = document.getElementById("statBirdsShown");
@@ -101,7 +105,7 @@
   ];
 
   function setStatus(text) {
-    statusEl.textContent = text;
+    if (statusEl) statusEl.textContent = text;
   }
 
   function setModeLabel(text) {
@@ -118,16 +122,31 @@
 
   function configureControlsForMode() {
     const replay = isReplayMode();
-    prevGenBtn.hidden = replay;
-    nextGenBtn.hidden = replay;
-    autoplayToggle.closest("label")?.toggleAttribute("hidden", replay);
-    generationSlider.hidden = replay;
+    if (prevGenBtn) prevGenBtn.hidden = replay;
+    if (nextGenBtn) nextGenBtn.hidden = replay;
+    autoplayToggle?.closest("label")?.toggleAttribute("hidden", replay);
+    if (generationSlider) generationSlider.hidden = replay;
     generationSliderLabel?.toggleAttribute("hidden", replay);
-    trailToggle.closest("label")?.toggleAttribute("hidden", replay);
-    championOnlyToggle.closest("label")?.toggleAttribute("hidden", replay);
-    debugToggle.closest("label")?.toggleAttribute("hidden", replay);
-    rankingList.hidden = replay;
-    generationDebugLine.hidden = replay;
+    trailToggle?.closest("label")?.toggleAttribute("hidden", replay);
+    championOnlyToggle?.closest("label")?.toggleAttribute("hidden", replay);
+    debugToggle?.closest("label")?.toggleAttribute("hidden", replay);
+    if (rankingList) rankingList.hidden = replay;
+    if (generationDebugLine) generationDebugLine.hidden = replay;
+  }
+
+  function getCurrentGeneration() {
+    if (isReplayMode()) return null;
+    return state.data?.generations?.[state.generationIndex] || null;
+  }
+
+  function emitUpdateEvent() {
+    document.dispatchEvent(new CustomEvent("flappy-viewer:update", {
+      detail: {
+        mode: state.mode,
+        generationIndex: state.generationIndex,
+        currentGeneration: getCurrentGeneration(),
+      },
+    }));
   }
 
   function applyReplayFrame(frameIndex) {
@@ -497,7 +516,8 @@
     if (options.triggerMilestoneBanner) {
       maybeShowMilestoneBanner(previousDifficulty, nextDifficulty);
     }
-    generationSlider.value = String(generationIdx);
+    if (generationSlider) generationSlider.value = String(generationIdx);
+    emitUpdateEvent();
     render();
   }
 
@@ -518,7 +538,7 @@
   }
 
   function drawBrainOverlay() {
-    if (!state.showBrain) return;
+    if (!state.showBrain || !brainCtx || !brainCanvas || !brainInputsEl || !brainOutputEl || !brainDecisionEl || !brainFlapStateEl) return;
     const { championBird, inputs, outputs, activations } = state.brainView;
     if (!championBird || !championBird.runtime || !inputs || !outputs || !activations) return;
     const runtime = championBird.runtime;
@@ -683,7 +703,7 @@
       if (nextFrameIndex >= state.replayFrames.length) {
         state.generationDone = true;
         state.playing = false;
-        playPauseBtn.textContent = "Play sim";
+        if (playPauseBtn) playPauseBtn.textContent = "Play sim";
         return;
       }
       applyReplayFrame(nextFrameIndex);
@@ -876,7 +896,7 @@
         .slice(0, 5)
         .map((bird) => `#${bird.rank}: ${bird.score}${bird.alive ? "" : " ✖"}`)
         .join(" | ");
-      rankingList.textContent = `Top scores: ${topFive}`;
+      if (rankingList) rankingList.textContent = `Top scores: ${topFive}`;
     }
     if (state.milestoneBannerText) {
       milestoneBanner.textContent = state.milestoneBannerText;
@@ -904,7 +924,7 @@
         const atLastGeneration = state.generationIndex >= state.data.generations.length - 1;
         if (atLastGeneration) {
           state.autoplayEnabled = false;
-          autoplayToggle.checked = false;
+          if (autoplayToggle) autoplayToggle.checked = false;
         } else {
           loadGenerationByIndex(state.generationIndex + 1, { triggerMilestoneBanner: true, clearBanner: false });
         }
@@ -916,51 +936,51 @@
   }
 
   function attachControls() {
-    playPauseBtn.addEventListener("click", () => {
+    playPauseBtn?.addEventListener("click", () => {
       state.playing = !state.playing;
       playPauseBtn.textContent = state.playing ? "Pause sim" : "Play sim";
     });
 
-    autoplayToggle.addEventListener("change", (event) => {
+    autoplayToggle?.addEventListener("change", (event) => {
       state.autoplayEnabled = Boolean(event.target.checked);
     });
 
-    prevGenBtn.addEventListener("click", () => {
+    prevGenBtn?.addEventListener("click", () => {
       if (isReplayMode()) return;
       loadGenerationByIndex((state.generationIndex - 1 + state.data.generations.length) % state.data.generations.length, { clearBanner: true });
     });
-    nextGenBtn.addEventListener("click", () => {
+    nextGenBtn?.addEventListener("click", () => {
       if (isReplayMode()) return;
       loadGenerationByIndex((state.generationIndex + 1) % state.data.generations.length, { clearBanner: true });
     });
 
-    generationSlider.addEventListener("input", (event) => {
+    generationSlider?.addEventListener("input", (event) => {
       if (!state.data) return;
       loadGenerationByIndex(Number(event.target.value) || 0, { clearBanner: true });
     });
 
-    speedSlider.addEventListener("input", (event) => {
+    speedSlider?.addEventListener("input", (event) => {
       state.simSpeedMultiplier = clamp((Number(event.target.value) || 1500) / 1000, 0.5, 3);
     });
 
-    trailToggle.addEventListener("change", (event) => {
+    trailToggle?.addEventListener("change", (event) => {
       state.showTrails = Boolean(event.target.checked);
       if (!state.showTrails) {
         state.trailHistory = state.trailHistory.map(() => []);
       }
     });
 
-    championOnlyToggle.addEventListener("change", (event) => {
+    championOnlyToggle?.addEventListener("change", (event) => {
       state.showChampionOnly = Boolean(event.target.checked);
     });
 
-    debugToggle.addEventListener("change", (event) => {
+    debugToggle?.addEventListener("change", (event) => {
       state.showDebug = Boolean(event.target.checked);
     });
 
-    showBrainToggle.addEventListener("change", (event) => {
+    showBrainToggle?.addEventListener("change", (event) => {
       state.showBrain = Boolean(event.target.checked);
-      brainPanel.hidden = !state.showBrain;
+      if (brainPanel) brainPanel.hidden = !state.showBrain;
     });
   }
 
@@ -1006,12 +1026,14 @@
         state.generationNumberToIndex.set(generationNumber, i);
       }
       state.bestPipesAllTime = computeBestPipesAllTime(data);
-      generationSlider.min = "0";
-      generationSlider.max = String(data.generations.length - 1);
+      if (generationSlider) {
+        generationSlider.min = "0";
+        generationSlider.max = String(data.generations.length - 1);
+      }
       setErrorMessage("");
       setModeLabel("Evolution mode");
       setStatus(`Loaded ${data.generations.length} generations from evolution.json.`);
-      state.simSpeedMultiplier = clamp((Number(speedSlider.value) || 1500) / 1000, 0.5, 3);
+      state.simSpeedMultiplier = clamp((Number(speedSlider?.value) || 1500) / 1000, 0.5, 3);
       if (state.generationNumberToIndex.has(0)) {
         loadGenerationByNumber(0, { clearBanner: true });
       } else {
@@ -1039,11 +1061,12 @@
       state.replayFrames = data.frames;
       state.stepAccumulator = 0;
       state.generationDone = false;
-      state.simSpeedMultiplier = clamp((Number(speedSlider.value) || 1500) / 1000, 0.5, 3);
+      state.simSpeedMultiplier = clamp((Number(speedSlider?.value) || 1500) / 1000, 0.5, 3);
       setErrorMessage("");
       setModeLabel("Replay mode");
       setStatus(`Loaded ${data.frames.length} replay frames from simulation.json.`);
       applyReplayFrame(0);
+      emitUpdateEvent();
     } catch (error) {
       console.error("Failed loading simulation.json", {
         kind: error.kind || "unknown",
@@ -1083,6 +1106,29 @@
       configureControlsForMode();
     }
   }
+
+
+  async function loadMode(mode) {
+    if (mode === "replay") {
+      await loadReplay();
+    } else {
+      await loadEvolution();
+    }
+    configureControlsForMode();
+  }
+
+  function getSnapshot() {
+    return {
+      mode: state.mode,
+      generationIndex: state.generationIndex,
+      currentGeneration: getCurrentGeneration(),
+    };
+  }
+
+  window.FlappyViewer = {
+    loadMode,
+    getSnapshot,
+  };
 
   attachControls();
   initializeDataLoad();
