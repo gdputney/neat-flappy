@@ -45,6 +45,8 @@ class SimulationConfig:
     world_width: float = 500.0
     world_height: float = 800.0
     pipe_spacing: float = 220.0
+    pipe_gap: float = 180.0
+    pipe_speed: float = 3.0
     seed: int | None = None
     compatibility_threshold: float = 1.2
     target_species: int = 8
@@ -53,6 +55,12 @@ class SimulationConfig:
     flap_policy: str = "probabilistic"
     eval_episodes: int = 1
     deterministic_pipes: bool = False
+    enable_curriculum: bool = False
+    curriculum_mode: str = "global"
+    curriculum_milestones: tuple[int, ...] = (10, 25, 50, 100)
+    curriculum_gap_deltas: tuple[float, ...] = (2.0, 5.0, 10.0, 18.0)
+    curriculum_speed_deltas: tuple[float, ...] = (0.05, 0.10, 0.20, 0.35)
+    curriculum_spacing_deltas: tuple[float, ...] = (0.0, 0.0, 5.0, 10.0)
     shaping_weight: float = 10.0
     shaping_scale: float = SHAPING_SCALE
     flap_cooldown_frames: int = FLAP_COOLDOWN_FRAMES
@@ -211,6 +219,40 @@ def clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))
 
 
+def parse_curriculum_list(value: str, *, cast: type[int] | type[float], name: str) -> tuple[int, ...] | tuple[float, ...]:
+    try:
+        parsed = tuple(cast(part.strip()) for part in value.split(",") if part.strip())
+    except ValueError as exc:
+        raise ValueError(f"Invalid --{name}: {value}") from exc
+    if not parsed:
+        raise ValueError(f"--{name} cannot be empty")
+    return parsed
+
+
+def compute_curriculum_params(
+    best_pipes_ever: int,
+    base_gap: float,
+    base_speed: float,
+    base_spacing: float,
+    config: SimulationConfig,
+) -> tuple[float, float, float, int]:
+    if not config.enable_curriculum:
+        return base_gap, base_speed, base_spacing, -1
+
+    level_index = -1
+    for index, milestone in enumerate(config.curriculum_milestones):
+        if best_pipes_ever >= milestone:
+            level_index = index
+
+    if level_index < 0:
+        return base_gap, base_speed, base_spacing, -1
+
+    gap = max(80.0, base_gap - config.curriculum_gap_deltas[level_index])
+    speed = base_speed + config.curriculum_speed_deltas[level_index]
+    spacing = max(140.0, base_spacing - config.curriculum_spacing_deltas[level_index])
+    return gap, speed, spacing, level_index
+
+
 def normalize_inputs(bird: Bird, pipes: list[Pipe], config: SimulationConfig) -> list[float]:
     """Build normalized NN inputs in stable ranges.
 
@@ -259,9 +301,15 @@ def simulate_genome(
     config: SimulationConfig,
     pipe_rng_seed: int | None = None,
     action_rng_seed: int | None = None,
+    pipe_gap: float | None = None,
+    pipe_speed: float | None = None,
+    pipe_spacing: float | None = None,
 ) -> dict[str, Any]:
     pipe_rng = random.Random(pipe_rng_seed) if pipe_rng_seed is not None else random
     action_rng = random.Random(action_rng_seed) if action_rng_seed is not None else None
+    effective_pipe_gap = config.pipe_gap if pipe_gap is None else pipe_gap
+    effective_pipe_speed = config.pipe_speed if pipe_speed is None else pipe_speed
+    effective_pipe_spacing = config.pipe_spacing if pipe_spacing is None else pipe_spacing
 
     bird = Bird(
         world_width=config.world_width,
@@ -270,7 +318,13 @@ def simulate_genome(
         velocity_min=config.velocity_min,
         velocity_max=config.velocity_max,
     )
-    first_pipe = Pipe(x=config.world_width + 120.0, world_height=config.world_height, rng=pipe_rng)
+    first_pipe = Pipe(
+        x=config.world_width + 120.0,
+        world_height=config.world_height,
+        gap_size=effective_pipe_gap,
+        speed=effective_pipe_speed,
+        rng=pipe_rng,
+    )
     pipes = [first_pipe]
     next_pipe_index = 0
     frames: list[dict[str, Any]] = []
@@ -294,8 +348,16 @@ def simulate_genome(
     previous_abs_gap_error_norm: float | None = None
 
     while alive and steps < config.max_steps:
-        if pipes[-1].x < config.world_width - config.pipe_spacing:
-            pipes.append(Pipe(x=config.world_width + 50.0, world_height=config.world_height, rng=pipe_rng))
+        if pipes[-1].x < config.world_width - effective_pipe_spacing:
+            pipes.append(
+                Pipe(
+                    x=config.world_width + 50.0,
+                    world_height=config.world_height,
+                    gap_size=effective_pipe_gap,
+                    speed=effective_pipe_speed,
+                    rng=pipe_rng,
+                )
+            )
 
         inputs = normalize_inputs(bird, pipes, config)
         output = genome.activate(inputs)[0]
@@ -360,7 +422,7 @@ def simulate_genome(
             half_gap_height = max((next_pipe.bottom - next_pipe.top) / 2.0, 1e-6)
             abs_gap_error = abs(bird.y - gap_center) / half_gap_height
             dx_to_next_pipe = next_pipe.x - bird.x
-            proximity = proximity_weight(dx_to_next_pipe=dx_to_next_pipe, ramp_distance=config.pipe_spacing)
+            proximity = proximity_weight(dx_to_next_pipe=dx_to_next_pipe, ramp_distance=effective_pipe_spacing)
             clamped_abs_gap_error = clamp(abs_gap_error, 0.0, config.abs_gap_error_clamp)
             normalized_abs_gap_error = clamp(
                 clamped_abs_gap_error / max(config.abs_gap_error_clamp, 1e-6),
@@ -688,6 +750,9 @@ def evaluate_genome(
     config: SimulationConfig,
     generation_index: int,
     genome_index: int,
+    pipe_gap: float | None = None,
+    pipe_speed: float | None = None,
+    pipe_spacing: float | None = None,
 ) -> dict[str, Any]:
     base_seed = int(config.seed or 0)
     episode_results: list[dict[str, Any]] = []
@@ -699,7 +764,15 @@ def evaluate_genome(
             pipe_seed = derive_seed(base_seed, generation_index, genome_index, episode_index)
         action_seed = derive_seed(base_seed, generation_index, genome_index, episode_index, 17)
         episode_results.append(
-            simulate_genome(genome, config, pipe_rng_seed=pipe_seed, action_rng_seed=action_seed)
+            simulate_genome(
+                genome,
+                config,
+                pipe_rng_seed=pipe_seed,
+                action_rng_seed=action_seed,
+                pipe_gap=pipe_gap,
+                pipe_speed=pipe_speed,
+                pipe_spacing=pipe_spacing,
+            )
         )
 
     episode_fitnesses = [result["fitness"] for result in episode_results]
@@ -739,11 +812,27 @@ def run_simulation(config: SimulationConfig) -> dict[str, Any]:
     best_genome: Genome | None = None
     best_generation = -1
     best_genome_index = -1
+    best_pipes_ever = 0
 
     for generation_index in range(config.generations):
         generation_results = []
+        effective_gap, effective_speed, effective_spacing, curriculum_level = compute_curriculum_params(
+            best_pipes_ever=best_pipes_ever,
+            base_gap=config.pipe_gap,
+            base_speed=config.pipe_speed,
+            base_spacing=config.pipe_spacing,
+            config=config,
+        )
         for genome_index, genome in enumerate(population):
-            result = evaluate_genome(genome, config, generation_index, genome_index)
+            result = evaluate_genome(
+                genome,
+                config,
+                generation_index,
+                genome_index,
+                pipe_gap=effective_gap,
+                pipe_speed=effective_speed,
+                pipe_spacing=effective_spacing,
+            )
             generation_results.append(
                 {
                     "genome_index": genome_index,
@@ -801,6 +890,20 @@ def run_simulation(config: SimulationConfig) -> dict[str, Any]:
             min_threshold=config.min_compatibility_threshold,
         )
 
+        if config.curriculum_mode == "species":
+            species = speciate_population(population, config.compatibility_threshold)
+            result_by_genome_index = {result["genome_index"]: result for result in generation_results}
+            species_champion_max = 0
+            for group in species:
+                champion = max(group, key=lambda candidate: candidate.fitness)
+                champion_index = population.index(champion)
+                champion_result = result_by_genome_index[champion_index]
+                candidate_max = max(champion_result.get("episode_pipes_passed", [champion_result.get("pipes_passed", 0)]))
+                species_champion_max = max(species_champion_max, candidate_max)
+            updated_best_pipes_ever = max(best_pipes_ever, species_champion_max)
+        else:
+            updated_best_pipes_ever = max(best_pipes_ever, best_episode_pipes_passed_max)
+
         print(
             f"Generation {generation_index + 1}/{config.generations}: "
             f"best={best_fitness:.2f} mean={mean_fitness:.2f} "
@@ -821,7 +924,12 @@ def run_simulation(config: SimulationConfig) -> dict[str, Any]:
             f"mean_hidden_nodes={population_mean_hidden_nodes:.2f} "
             f"mean_enabled_connections={population_mean_enabled_connections:.2f} "
             f"champ_hidden_nodes={best_hidden_nodes} "
-            f"champ_enabled_connections={best_enabled_connections}"
+            f"champ_enabled_connections={best_enabled_connections} "
+            f"curriculum_level={curriculum_level} "
+            f"curriculum_best_pipes_ever={updated_best_pipes_ever} "
+            f"curriculum_gap={effective_gap:.1f} "
+            f"curriculum_pipe_speed={effective_speed:.2f} "
+            f"curriculum_pipe_spacing={effective_spacing:.1f}"
         )
 
         output["generations"].append(
@@ -850,9 +958,16 @@ def run_simulation(config: SimulationConfig) -> dict[str, Any]:
                 "best_enabled_connections": best_enabled_connections,
                 "population_mean_hidden_nodes": population_mean_hidden_nodes,
                 "population_mean_enabled_connections": population_mean_enabled_connections,
+                "curriculum_enabled": config.enable_curriculum,
+                "curriculum_level": curriculum_level,
+                "curriculum_best_pipes_ever": updated_best_pipes_ever,
+                "curriculum_gap": effective_gap,
+                "curriculum_pipe_speed": effective_speed,
+                "curriculum_pipe_spacing": effective_spacing,
                 "genomes": generation_results,
             }
         )
+        best_pipes_ever = updated_best_pipes_ever
         config.compatibility_threshold = next_threshold
         population = evolve_population(population, tracker, config)
 
@@ -891,6 +1006,12 @@ def write_stats(simulation_data: dict[str, Any], run_dir: Path, save_csv: bool) 
             "best_enabled_connections": generation.get("best_enabled_connections", 0),
             "population_mean_hidden_nodes": generation.get("population_mean_hidden_nodes", 0.0),
             "population_mean_enabled_connections": generation.get("population_mean_enabled_connections", 0.0),
+            "curriculum_enabled": generation.get("curriculum_enabled", False),
+            "curriculum_level": generation.get("curriculum_level", -1),
+            "curriculum_best_pipes_ever": generation.get("curriculum_best_pipes_ever", 0),
+            "curriculum_gap": generation.get("curriculum_gap", simulation_data["config"].get("pipe_gap", 180.0)),
+            "curriculum_pipe_speed": generation.get("curriculum_pipe_speed", simulation_data["config"].get("pipe_speed", 3.0)),
+            "curriculum_pipe_spacing": generation.get("curriculum_pipe_spacing", simulation_data["config"].get("pipe_spacing", 220.0)),
         }
         for generation in simulation_data["generations"]
     ]
@@ -934,6 +1055,12 @@ def write_stats(simulation_data: dict[str, Any], run_dir: Path, save_csv: bool) 
                     "best_enabled_connections",
                     "population_mean_hidden_nodes",
                     "population_mean_enabled_connections",
+                    "curriculum_enabled",
+                    "curriculum_level",
+                    "curriculum_best_pipes_ever",
+                    "curriculum_gap",
+                    "curriculum_pipe_speed",
+                    "curriculum_pipe_spacing",
                 ],
             )
             writer.writeheader()
@@ -1096,7 +1223,6 @@ def write_web_evolution(
                 "max_steps": config.max_steps,
                 "world_width": config.world_width,
                 "world_height": config.world_height,
-                "pipe_spacing": config.pipe_spacing,
                 "flap_cooldown_frames": config.flap_cooldown_frames,
                 "flap_on_threshold": config.flap_on_threshold,
                 "flap_off_threshold": config.flap_off_threshold,
@@ -1107,9 +1233,13 @@ def write_web_evolution(
                 "bird_x": bird_defaults.x,
                 "bird_start_y": bird_defaults.y,
                 "pipe_width": pipe_defaults.width,
-                "pipe_gap_size": pipe_defaults.gap_size,
-                "pipe_speed": pipe_defaults.speed,
+                "pipe_gap_size": config.pipe_gap,
+                "pipe_speed": config.pipe_speed,
+                "pipe_spacing": config.pipe_spacing,
                 "pipe_min_margin": pipe_defaults.min_margin,
+                "base_pipe_gap": config.pipe_gap,
+                "base_pipe_speed": config.pipe_speed,
+                "base_pipe_spacing": config.pipe_spacing,
                 "first_pipe_x": config.world_width + 120.0,
                 "new_pipe_x": config.world_width + 50.0,
                 "offscreen_pipe_right_threshold": -5.0,
@@ -1147,6 +1277,11 @@ def write_web_evolution(
                 "generation_index": generation_index,
                 "pipe_seed": pipe_seed,
                 "episode_index": eval_episode,
+                "curriculum_level": generation.get("curriculum_level", -1),
+                "curriculum_best_pipes_ever": generation.get("curriculum_best_pipes_ever", 0),
+                "curriculum_gap": generation.get("curriculum_gap", config.pipe_gap),
+                "curriculum_pipe_speed": generation.get("curriculum_pipe_speed", config.pipe_speed),
+                "curriculum_pipe_spacing": generation.get("curriculum_pipe_spacing", config.pipe_spacing),
                 "genomes": top_genomes,
             }
         )
@@ -1215,6 +1350,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--eval-episodes", type=int, default=SimulationConfig.eval_episodes)
     parser.add_argument("--deterministic-pipes", action="store_true")
+    parser.add_argument("--enable-curriculum", action="store_true")
+    parser.add_argument("--curriculum-mode", choices=["global", "species"], default=SimulationConfig.curriculum_mode)
+    parser.add_argument("--curriculum-milestones", type=str, default="10,25,50,100")
+    parser.add_argument("--curriculum-gap-deltas", type=str, default="2,5,10,18")
+    parser.add_argument("--curriculum-speed-deltas", type=str, default="0.05,0.10,0.20,0.35")
+    parser.add_argument("--curriculum-spacing-deltas", type=str, default="0,0,5,10")
     parser.add_argument("--population-size", type=int, default=SimulationConfig.population_size)
     parser.add_argument("--target-species", type=int, default=SimulationConfig.target_species)
     parser.add_argument(
@@ -1254,6 +1395,26 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    curriculum_milestones = parse_curriculum_list(
+        args.curriculum_milestones, cast=int, name="curriculum-milestones"
+    )
+    curriculum_gap_deltas = parse_curriculum_list(
+        args.curriculum_gap_deltas, cast=float, name="curriculum-gap-deltas"
+    )
+    curriculum_speed_deltas = parse_curriculum_list(
+        args.curriculum_speed_deltas, cast=float, name="curriculum-speed-deltas"
+    )
+    curriculum_spacing_deltas = parse_curriculum_list(
+        args.curriculum_spacing_deltas, cast=float, name="curriculum-spacing-deltas"
+    )
+    expected_length = len(curriculum_milestones)
+    if not (
+        len(curriculum_gap_deltas) == expected_length
+        and len(curriculum_speed_deltas) == expected_length
+        and len(curriculum_spacing_deltas) == expected_length
+    ):
+        raise ValueError("Curriculum milestones and delta lists must have equal lengths")
+
     config = SimulationConfig(
         seed=args.seed,
         generations=max(1, args.generations),
@@ -1267,6 +1428,12 @@ def main() -> None:
         ceiling_touch_penalty=max(0.0, args.ceiling_touch_penalty),
         eval_episodes=max(1, args.eval_episodes),
         deterministic_pipes=args.deterministic_pipes,
+        enable_curriculum=args.enable_curriculum,
+        curriculum_mode=args.curriculum_mode,
+        curriculum_milestones=tuple(int(value) for value in curriculum_milestones),
+        curriculum_gap_deltas=tuple(float(value) for value in curriculum_gap_deltas),
+        curriculum_speed_deltas=tuple(float(value) for value in curriculum_speed_deltas),
+        curriculum_spacing_deltas=tuple(float(value) for value in curriculum_spacing_deltas),
         population_size=max(2, args.population_size),
         target_species=max(1, args.target_species),
         compatibility_adjust_step=max(0.0, args.compatibility_adjust_step),

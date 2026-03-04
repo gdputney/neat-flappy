@@ -35,6 +35,9 @@ Useful options:
 - `--generations <int>` to set how many generations to evolve (default `10`).
 - `--target-species <int>` and `--compatibility-adjust-step <float>` to tune speciation threshold adaptation (`8` and `0.02` by default).
 - `--csv` to additionally save `fitness.csv` in the run folder.
+- `--enable-curriculum` to turn on milestone-based difficulty progression.
+- `--curriculum-mode {global,species}` to choose whether milestones are driven by global champion best pipes or species champions.
+- `--curriculum-milestones`, `--curriculum-gap-deltas`, `--curriculum-speed-deltas`, and `--curriculum-spacing-deltas` to define curriculum thresholds and per-level environment changes.
 - `--plot` to save `fitness_over_generations.png` in the run folder (requires `matplotlib`).
 - `--replay runs/run_<timestamp>/best_genome.json` to replay a single bird with a saved best genome.
 - `--record-replay` to write `web/simulation.json` from a best-genome replay using fixed-`dt` frames.
@@ -68,12 +71,12 @@ Use these training knobs to reduce evaluation noise and stabilize species dynami
 Suggested training command:
 
 ```bash
-python main.py --seed 7 --eval-episodes 3 --deterministic-pipes --population-size 100 --target-species 8 --compatibility-adjust-step 0.02 --flap-policy deterministic --csv --plot
+python main.py --seed 7 --eval-episodes 3 --deterministic-pipes --population-size 100 --target-species 8 --compatibility-adjust-step 0.02 --flap-policy deterministic --enable-curriculum --curriculum-mode global --curriculum-milestones 10,25,50,100 --curriculum-gap-deltas 2,5,10,18 --curriculum-speed-deltas 0.05,0.10,0.20,0.35 --curriculum-spacing-deltas 0,0,5,10 --csv --plot
 ```
 
 Outputs are written to:
 
-- `runs/run_<timestamp>/stats.json` (includes per-generation `best_episode_pipes_passed_max` and `best_episode_pipes_passed_mean`)
+- `runs/run_<timestamp>/stats.json` (includes per-generation `best_episode_pipes_passed_max`, `best_episode_pipes_passed_mean`, and curriculum telemetry fields)
 - `runs/run_<timestamp>/best_genome.json`
 - `runs/run_<timestamp>/fitness.csv` (if `--csv`)
 - `runs/run_<timestamp>/fitness_over_generations.png` (if `--plot`)

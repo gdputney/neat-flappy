@@ -54,6 +54,27 @@
         border: 1px solid rgba(148, 163, 184, 0.35);
         backdrop-filter: blur(2px);
       }
+      .milestone-banner {
+        position: absolute;
+        top: 12px;
+        left: 50%;
+        transform: translateX(-50%);
+        max-width: min(92%, 460px);
+        padding: 8px 12px;
+        border-radius: 999px;
+        border: 1px solid rgba(254, 240, 138, 0.75);
+        background: rgba(113, 63, 18, 0.9);
+        color: #fef9c3;
+        font-size: 0.88rem;
+        font-weight: 600;
+        text-align: center;
+        opacity: 0;
+        transition: opacity 180ms ease-in-out;
+        pointer-events: none;
+      }
+      .milestone-banner.visible {
+        opacity: 1;
+      }
       .stats {
         display: grid;
         grid-template-columns: 1fr 1fr;
@@ -148,6 +169,7 @@
       <p id="status">Loading evolution.json...</p>
       <div class="viewer-shell">
         <canvas id="simCanvas" width="500" height="800"></canvas>
+        <div id="milestoneBanner" class="milestone-banner" aria-live="polite"></div>
         <aside class="overlay" aria-label="Viewer controls and stats">
           <div class="stats">
             <div>Generation: <b id="statGeneration">0 / 0</b></div>
@@ -155,6 +177,11 @@
             <div>Alive count: <b id="statAlive">0</b></div>
             <div>Best pipes (gen): <b id="statBestGen">0</b></div>
             <div>Best pipes (all-time): <b id="statBestAll">0</b></div>
+            <div>Curriculum level: <b id="statCurriculumLevel">-</b></div>
+            <div>Curriculum best-ever: <b id="statCurriculumBestEver">-</b></div>
+            <div>Gap: <b id="statCurriculumGap">-</b></div>
+            <div>Speed: <b id="statCurriculumSpeed">-</b></div>
+            <div>Spacing: <b id="statCurriculumSpacing">-</b></div>
             <div>Autoplay: <b id="statPlayback">ON (sequential)</b></div>
             <div style="grid-column: 1 / -1;">Deterministic seed: <b id="statSeed">-</b></div>
           </div>
