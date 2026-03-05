@@ -56,13 +56,23 @@
     showTrails: false,
     showDebug: false,
     showBrain: false,
-    showManyBirds: false,
+    showManyBirds: true,
     selectedRank: 1,
     stepAccumulator: 0,
     lastTimestamp: 0,
     birds: [],
+    renderEntries: [],
     pipes: [],
     trailHistory: [],
+    logicalWidth: 500,
+    logicalHeight: 800,
+    dpr: 1,
+    skyGradient: null,
+    vignetteGradient: null,
+  };
+
+  const STORAGE_KEYS = {
+    showManyBirds: "showManyBirds",
   };
 
   const setStatus = (text) => { if (els.status) els.status.textContent = text; };
@@ -73,8 +83,15 @@
 
   function sizeCanvas() {
     const cfg = state.replay?.config || {};
-    canvas.width = Number(cfg.world_width || canvas.width || 500);
-    canvas.height = Number(cfg.world_height || canvas.height || 800);
+    state.logicalWidth = Number(cfg.world_width || state.logicalWidth || 500);
+    state.logicalHeight = Number(cfg.world_height || state.logicalHeight || 800);
+    state.dpr = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
+    canvas.width = Math.round(state.logicalWidth * state.dpr);
+    canvas.height = Math.round(state.logicalHeight * state.dpr);
+    canvas.style.aspectRatio = `${state.logicalWidth} / ${state.logicalHeight}`;
+    ctx.setTransform(state.dpr, 0, 0, state.dpr, 0, 0);
+    state.skyGradient = null;
+    state.vignetteGradient = null;
   }
 
   function normalizeReplayData(raw) {
@@ -165,7 +182,8 @@
     if (!generation) return;
 
     const cfg = state.replay?.config || {};
-    const worldHeight = Number(cfg.world_height || canvas.height);
+    const worldHeight = Number(cfg.world_height || state.logicalHeight);
+    const worldWidth = Number(cfg.world_width || state.logicalWidth);
     const shown = state.showManyBirds ? state.traces : [getTraceByRank(state.selectedRank)].filter(Boolean);
 
     const generationLabel = Number(generation?.generation ?? state.generationIndex);
@@ -176,23 +194,37 @@
     }
 
     state.frameIndex = frameIndex;
-    state.birds = shown.map((trace, idx) => {
+    state.renderEntries = shown.map((trace, idx) => {
       const frames = trace.frames || [];
       const safeIndex = Math.min(frameIndex, Math.max(0, frames.length - 1));
       const frame = frames[safeIndex];
       if (!frame) return null;
+      const alive = Boolean(frame.alive ?? 0);
+      const x = clamp(Number(frame.x ?? cfg.bird_x ?? 80), 0, worldWidth);
+      const y = clamp(Number(frame.y ?? worldHeight / 2), 0, worldHeight);
+
+      if (state.showTrails) {
+        const trail = state.trailHistory[idx] || (state.trailHistory[idx] = []);
+        if (alive) {
+          trail.push({ x, y });
+          if (trail.length > 120) trail.shift();
+        }
+      }
+
       return {
         rank: Number(trace.rank || 1),
-        x: clamp(Number(frame.x ?? cfg.bird_x ?? 80), 0, canvas.width),
-        y: clamp(Number(frame.y ?? worldHeight / 2), 0, worldHeight),
+        x,
+        y,
         velocity: Number(frame.vy ?? 0),
-        alive: Boolean(frame.alive ?? 0),
+        alive,
         flap: Boolean(frame.flap ?? 0),
         out: frame.out,
         pipesPassed: Number(frame.pipes_passed ?? 0),
         color: `hsla(${Math.round((idx * 360) / Math.max(1, shown.length))}, 85%, 52%, 0.72)`,
       };
     }).filter(Boolean);
+
+    state.birds = state.renderEntries.filter((bird) => bird.alive);
 
     const champion = getTraceByRank(1) || shown[0] || null;
     const champFrames = champion?.frames || [];
@@ -210,14 +242,8 @@
       };
     });
 
-    if (state.showTrails) {
-      state.birds.forEach((bird, idx) => {
-        state.trailHistory[idx] = state.trailHistory[idx] || [];
-        state.trailHistory[idx].push({ x: bird.x, y: bird.y });
-        if (state.trailHistory[idx].length > 120) state.trailHistory[idx].shift();
-      });
-    } else {
-      state.trailHistory = state.birds.map(() => []);
+    if (!state.showTrails) {
+      state.trailHistory.length = 0;
     }
   }
 
@@ -233,42 +259,108 @@
   }
 
   function drawBackground() {
-    const sky = ctx.createLinearGradient(0, 0, 0, canvas.height);
-    sky.addColorStop(0, "#7bc8ff");
-    sky.addColorStop(1, "#c6f0ff");
-    ctx.fillStyle = sky;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    if (!state.skyGradient) {
+      const sky = ctx.createLinearGradient(0, 0, 0, state.logicalHeight);
+      sky.addColorStop(0, "#8dd2ff");
+      sky.addColorStop(0.55, "#9fdcff");
+      sky.addColorStop(1, "#d6f3ff");
+      state.skyGradient = sky;
+    }
+    if (!state.vignetteGradient) {
+      const v = ctx.createRadialGradient(
+        state.logicalWidth * 0.5,
+        state.logicalHeight * 0.35,
+        Math.min(state.logicalWidth, state.logicalHeight) * 0.2,
+        state.logicalWidth * 0.5,
+        state.logicalHeight * 0.5,
+        Math.max(state.logicalWidth, state.logicalHeight) * 0.9,
+      );
+      v.addColorStop(0, "rgba(5, 18, 35, 0)");
+      v.addColorStop(1, "rgba(5, 18, 35, 0.24)");
+      state.vignetteGradient = v;
+    }
+    ctx.fillStyle = state.skyGradient;
+    ctx.fillRect(0, 0, state.logicalWidth, state.logicalHeight);
+    ctx.fillStyle = state.vignetteGradient;
+    ctx.fillRect(0, 0, state.logicalWidth, state.logicalHeight);
   }
 
   function drawPipe(pipe) {
-    ctx.fillStyle = "#2f6f25";
+    const lipHeight = Math.max(5, pipe.width * 0.12);
+    const bodyGradient = ctx.createLinearGradient(pipe.x, 0, pipe.x + pipe.width, 0);
+    bodyGradient.addColorStop(0, "#2f7b2f");
+    bodyGradient.addColorStop(0.5, "#48a43f");
+    bodyGradient.addColorStop(1, "#2f7b2f");
+
+    ctx.save();
+    ctx.shadowColor = "rgba(12, 28, 10, 0.25)";
+    ctx.shadowBlur = 8;
+    ctx.shadowOffsetX = 1;
+    ctx.shadowOffsetY = 2;
+    ctx.fillStyle = bodyGradient;
     ctx.fillRect(pipe.x, 0, pipe.width, pipe.top);
-    ctx.fillRect(pipe.x, pipe.bottom, pipe.width, canvas.height - pipe.bottom);
+    ctx.fillRect(pipe.x, pipe.bottom, pipe.width, state.logicalHeight - pipe.bottom);
+    ctx.restore();
+
+    ctx.fillStyle = "#6cc25a";
+    ctx.fillRect(pipe.x - 2, pipe.top - lipHeight, pipe.width + 4, lipHeight);
+    ctx.fillRect(pipe.x - 2, pipe.bottom, pipe.width + 4, lipHeight);
   }
 
   function drawBird(bird) {
+    const radius = 11;
     ctx.save();
     ctx.translate(bird.x, bird.y);
-    ctx.rotate(clamp(bird.velocity * 0.11, -0.65, 0.75));
+    ctx.rotate(clamp(bird.velocity * 0.06, -0.45, 0.5));
     ctx.fillStyle = bird.color;
     ctx.beginPath();
-    ctx.arc(0, 0, 11, 0, Math.PI * 2);
+    ctx.arc(0, 0, radius, 0, Math.PI * 2);
     ctx.fill();
+
+    ctx.fillStyle = "rgba(255,255,255,0.28)";
+    ctx.beginPath();
+    ctx.ellipse(-2, 2, 7, 4.5, -0.3, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = "#ffb347";
+    ctx.beginPath();
+    ctx.moveTo(radius - 1, -2);
+    ctx.lineTo(radius + 7, 1);
+    ctx.lineTo(radius - 1, 4);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.fillStyle = "#0f172a";
+    ctx.beginPath();
+    ctx.arc(4, -3, 1.8, 0, Math.PI * 2);
+    ctx.fill();
+
     if (bird.rank === 1) {
-      ctx.strokeStyle = "#ffd54f";
-      ctx.lineWidth = 2;
+      ctx.strokeStyle = "rgba(255, 245, 157, 0.95)";
+      ctx.lineWidth = 2.4;
       ctx.beginPath();
-      ctx.arc(0, 0, 13, 0, Math.PI * 2);
+      ctx.arc(0, 0, radius + 2.8, 0, Math.PI * 2);
       ctx.stroke();
     }
     ctx.restore();
+  }
+
+  function drawRoundedPanel(x, y, w, h, r) {
+    const radius = Math.min(r, w * 0.5, h * 0.5);
+    ctx.beginPath();
+    ctx.moveTo(x + radius, y);
+    ctx.arcTo(x + w, y, x + w, y + h, radius);
+    ctx.arcTo(x + w, y + h, x, y + h, radius);
+    ctx.arcTo(x, y + h, x, y, radius);
+    ctx.arcTo(x, y, x + w, y, radius);
+    ctx.closePath();
   }
 
   function updateStats() {
     const generation = getGeneration();
     const total = state.generations.length;
     const genNum = Number(generation?.generation ?? state.generationIndex);
-    const birdsShown = state.showManyBirds ? state.traces.length : Math.min(1, state.traces.length);
+    const birdsShown = state.birds.length;
     const aliveCount = state.birds.filter((b) => b.alive).length;
     const bestGen = Math.max(0, ...(state.traces.map((trace) => {
       const endFrame = (trace.frames || [])[Math.max(0, (trace.frames || []).length - 1)] || {};
@@ -338,23 +430,25 @@
     if (!state.replay) return;
     drawBackground();
     state.pipes.forEach(drawPipe);
-    state.birds.forEach((bird, i) => {
+    state.renderEntries.forEach((entry, i) => {
       const trail = state.trailHistory[i] || [];
       if (state.showTrails && trail.length > 1) {
-        ctx.strokeStyle = bird.color;
+        ctx.strokeStyle = entry.color;
+        ctx.lineWidth = 1.5;
         ctx.beginPath();
         trail.forEach((p, idx) => (idx ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
         ctx.stroke();
       }
-      drawBird(bird);
     });
+    state.birds.forEach(drawBird);
 
     if (state.generationMessage) {
-      ctx.fillStyle = "rgba(17,24,39,0.90)";
-      ctx.fillRect(18, canvas.height - 74, canvas.width - 36, 52);
+      ctx.fillStyle = "rgba(17,24,39,0.84)";
+      drawRoundedPanel(18, state.logicalHeight - 80, state.logicalWidth - 36, 56, 12);
+      ctx.fill();
       ctx.fillStyle = "#fef3c7";
       ctx.font = "14px sans-serif";
-      ctx.fillText(state.generationMessage, 28, canvas.height - 42);
+      ctx.fillText(state.generationMessage, 28, state.logicalHeight - 46);
     }
 
     updateStats();
@@ -411,6 +505,7 @@
     });
     els.showManyBirdsToggle?.addEventListener("change", (e) => {
       state.showManyBirds = Boolean(e.target.checked);
+      window.localStorage.setItem(STORAGE_KEYS.showManyBirds, state.showManyBirds ? "1" : "0");
       state.trailHistory = [];
       applyFrame(state.frameIndex);
     });
@@ -450,6 +545,9 @@
 
   async function init() {
     attachControls();
+    const showManyBirdsSaved = window.localStorage.getItem(STORAGE_KEYS.showManyBirds);
+    state.showManyBirds = showManyBirdsSaved === null ? true : showManyBirdsSaved === "1";
+    if (els.showManyBirdsToggle) els.showManyBirdsToggle.checked = state.showManyBirds;
     sizeCanvas();
     window.addEventListener("resize", sizeCanvas);
 
