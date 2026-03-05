@@ -19,7 +19,6 @@ from main import (
     decide_flap,
     evolve_population,
     parse_args,
-    run_debug_one_episode,
     derive_seed,
     evaluate_genome,
     run_simulation,
@@ -370,40 +369,6 @@ class CliParsingTests(unittest.TestCase):
 
 
 
-class DebugOneEpisodeTests(unittest.TestCase):
-    def test_debug_one_episode_logs_requested_fields(self) -> None:
-        config = SimulationConfig(max_steps=41, seed=4)
-
-        stream = io.StringIO()
-        with redirect_stdout(stream):
-            result = run_debug_one_episode(config)
-
-        output = stream.getvalue()
-        self.assertIn("initial_pipe_spawn_x=", output)
-        self.assertIn("initial_pipe_speed=", output)
-        self.assertIn("t=0", output)
-        self.assertIn("t=20", output)
-        self.assertIn("bird_x=", output)
-        self.assertIn("bird_y=", output)
-        self.assertIn("next_pipe_x=", output)
-        self.assertIn("dx_to_next_pipe=", output)
-        self.assertIn("reached_first_pipe=", output)
-        self.assertIn("pipes_passed=", output)
-        self.assertIn("death_reason=", output)
-        self.assertIn("death_bird_y=", output)
-        self.assertIn("death_bird_vel=", output)
-        self.assertIn("screen_bounds_y=", output)
-
-        self.assertIn("steps_executed", result)
-        self.assertIn("reached_first_pipe", result)
-        self.assertIn("pipes_passed", result)
-        self.assertIn("death_reason", result)
-        self.assertIn("death_bird_y", result)
-        self.assertIn("death_bird_velocity", result)
-        self.assertIn("screen_bounds", result)
-
-
-
 class ShapingSignalTests(unittest.TestCase):
     def test_reported_shaping_reward_matches_frame_reconstruction(self) -> None:
         config = SimulationConfig(max_steps=20, seed=19)
@@ -480,7 +445,7 @@ class PipePassingTests(unittest.TestCase):
 
 
 
-class CeilingAndDebugBehaviorTests(unittest.TestCase):
+class CeilingBehaviorTests(unittest.TestCase):
     def test_ceiling_clamp_applies_penalty_without_death(self) -> None:
         config = SimulationConfig(max_steps=1, ceiling_touch_penalty=123.0)
         tracker = InnovationTracker()
@@ -497,17 +462,6 @@ class CeilingAndDebugBehaviorTests(unittest.TestCase):
         self.assertEqual(result["ceiling_penalty"], 123.0)
         self.assertEqual(result["frames"][0]["bird"]["y"], 0)
         self.assertEqual(result["frames"][0]["bird"]["velocity"], 0)
-
-    def test_debug_flags_force_flap_behavior(self) -> None:
-        config = SimulationConfig(max_steps=5, debug_no_flap=True, debug_always_flap=True, seed=1)
-        stream = io.StringIO()
-        with redirect_stdout(stream):
-            result = run_debug_one_episode(config, interval=1)
-
-        output = stream.getvalue()
-        self.assertIn("steps_executed=", output)
-        self.assertIn("death_reason=", output)
-        self.assertGreaterEqual(result["steps_executed"], 1)
 
 class ElitismTests(unittest.TestCase):
     def test_global_top_genomes_are_carried_unchanged(self) -> None:
