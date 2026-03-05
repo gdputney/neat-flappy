@@ -7,7 +7,7 @@ from pathlib import Path
 
 
 class TrainingReplayExportTests(unittest.TestCase):
-    def test_training_replay_config_literal_has_unique_keys(self) -> None:
+    def test_training_replay_config_payload_uses_expected_keys(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
         module = ast.parse((repo_root / "main.py").read_text(encoding="utf-8"))
 
@@ -16,22 +16,31 @@ class TrainingReplayExportTests(unittest.TestCase):
             for node in module.body
             if isinstance(node, ast.FunctionDef) and node.name == "write_training_replay"
         )
-        payload_assignment = next(
+        config_assignment = next(
             node
             for node in write_training_replay.body
             if isinstance(node, ast.Assign)
-            and any(isinstance(target, ast.Name) and target.id == "payload" for target in node.targets)
-        )
-        config_literal = next(
-            value
-            for key, value in zip(payload_assignment.value.keys, payload_assignment.value.values)
-            if isinstance(key, ast.Constant) and key.value == "config"
+            and any(isinstance(target, ast.Name) and target.id == "config_payload" for target in node.targets)
         )
 
+        config_literal = config_assignment.value
         config_keys = [
             key.value for key in config_literal.keys if isinstance(key, ast.Constant) and isinstance(key.value, str)
         ]
-        self.assertEqual(len(config_keys), len(set(config_keys)), "duplicate config keys in replay payload literal")
+        expected_keys = {
+            "seed",
+            "max_steps",
+            "replay_top_k",
+            "flap_policy",
+            "world_width",
+            "world_height",
+            "pipe_gap",
+            "pipe_speed",
+            "pipe_spacing",
+            "bird_x",
+        }
+        self.assertSetEqual(expected_keys, set(config_keys))
+        self.assertEqual(1, config_keys.count("bird_x"), "config payload should include exactly one bird_x key")
 
     def test_record_training_replay_exports_expected_schema(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
