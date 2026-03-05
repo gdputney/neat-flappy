@@ -16,10 +16,10 @@ from main import (
     SimulationConfig,
     adjust_compatibility_threshold,
     create_initial_genome,
+    count_passed_pipes,
     decide_flap,
     evolve_population,
     parse_args,
-    pipe_crossed_bird,
     run_debug_one_episode,
     derive_seed,
     evaluate_genome,
@@ -437,19 +437,23 @@ class FlapPolicyTests(unittest.TestCase):
 
 
 class PipePassingTests(unittest.TestCase):
-    def test_pipe_crossing_counts_each_pipe_once(self) -> None:
+    def test_count_passed_pipes_counts_each_pipe_once(self) -> None:
         bird_x = 100.0
-        pipe_width = 80.0
-        pipe_a_positions = [220.0, 160.0, 40.0, -20.0]
-        pipe_b_positions = [320.0, 260.0, 180.0, 60.0, 10.0]
+        pipes = [Pipe(x=220.0, world_height=800.0), Pipe(x=320.0, world_height=800.0)]
 
-        crossings = 0
-        for previous_x, current_x in zip(pipe_a_positions, pipe_a_positions[1:]):
-            crossings += int(pipe_crossed_bird(previous_x, current_x, pipe_width, bird_x))
-        for previous_x, current_x in zip(pipe_b_positions, pipe_b_positions[1:]):
-            crossings += int(pipe_crossed_bird(previous_x, current_x, pipe_width, bird_x))
+        total_passed = 0
+        next_pipe_index = 0
+        for x_a, x_b in [(220.0, 320.0), (160.0, 260.0), (40.0, 180.0), (-20.0, 60.0), (-80.0, 10.0)]:
+            pipes[0].x = x_a
+            pipes[1].x = x_b
+            total_passed, next_pipe_index = count_passed_pipes(
+                pipes=pipes,
+                bird_x=bird_x,
+                next_pipe_index=next_pipe_index,
+                pipes_passed=total_passed,
+            )
 
-        self.assertEqual(crossings, 2)
+        self.assertEqual(total_passed, 2)
 
 
 
