@@ -152,15 +152,6 @@ def bird_hits_pipe(bird: Bird, pipe: Pipe) -> bool:
         return False
     return not (pipe.top <= bird.y <= pipe.bottom)
 
-
-
-
-def pipe_crossed_bird(previous_x: float, current_x: float, pipe_width: float, bird_x: float) -> bool:
-    previous_right_edge = previous_x + pipe_width
-    current_right_edge = current_x + pipe_width
-    return previous_right_edge >= bird_x and current_right_edge < bird_x
-
-
 def adjust_next_pipe_index(next_pipe_index: int, removed_from_front: int) -> int:
     """Shift next-pipe pointer left when off-screen pipes are dropped from the front."""
     if removed_from_front <= 0:
