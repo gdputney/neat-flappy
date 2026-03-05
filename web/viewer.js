@@ -69,6 +69,8 @@
     dpr: 1,
     skyGradient: null,
     vignetteGradient: null,
+    groundGradient: null,
+    clouds: [],
   };
 
   const STORAGE_KEYS = {
@@ -92,6 +94,24 @@
     ctx.setTransform(state.dpr, 0, 0, state.dpr, 0, 0);
     state.skyGradient = null;
     state.vignetteGradient = null;
+    state.groundGradient = null;
+    initializeClouds();
+  }
+
+  function initializeClouds() {
+    const cloudCount = Math.max(3, Math.min(7, Math.round(state.logicalWidth / 140)));
+    state.clouds = new Array(cloudCount);
+    for (let i = 0; i < cloudCount; i += 1) {
+      const scale = 0.7 + ((i % 4) * 0.16);
+      state.clouds[i] = {
+        baseX: (i / cloudCount) * state.logicalWidth,
+        y: 80 + ((i * 71) % Math.max(140, state.logicalHeight * 0.35)),
+        width: 58 * scale,
+        height: 24 * scale,
+        speed: 0.14 + (i % 5) * 0.035,
+        alpha: 0.11 + (i % 4) * 0.03,
+      };
+    }
   }
 
   function normalizeReplayData(raw) {
@@ -259,12 +279,22 @@
   }
 
   function drawBackground() {
+    const groundHeight = Math.max(44, state.logicalHeight * 0.085);
+    const horizonY = state.logicalHeight - groundHeight;
+
     if (!state.skyGradient) {
-      const sky = ctx.createLinearGradient(0, 0, 0, state.logicalHeight);
-      sky.addColorStop(0, "#8dd2ff");
-      sky.addColorStop(0.55, "#9fdcff");
-      sky.addColorStop(1, "#d6f3ff");
+      const sky = ctx.createLinearGradient(0, 0, 0, horizonY);
+      sky.addColorStop(0, "#7ecbff");
+      sky.addColorStop(0.62, "#b6e7ff");
+      sky.addColorStop(1, "#e6f8ff");
       state.skyGradient = sky;
+    }
+    if (!state.groundGradient) {
+      const ground = ctx.createLinearGradient(0, horizonY, 0, state.logicalHeight);
+      ground.addColorStop(0, "#d2be6e");
+      ground.addColorStop(0.35, "#bca35b");
+      ground.addColorStop(1, "#977f42");
+      state.groundGradient = ground;
     }
     if (!state.vignetteGradient) {
       const v = ctx.createRadialGradient(
@@ -280,66 +310,117 @@
       state.vignetteGradient = v;
     }
     ctx.fillStyle = state.skyGradient;
-    ctx.fillRect(0, 0, state.logicalWidth, state.logicalHeight);
+    ctx.fillRect(0, 0, state.logicalWidth, horizonY);
+
+    const cloudScroll = state.frameIndex;
+    for (const cloud of state.clouds) {
+      const cloudCycleWidth = state.logicalWidth + cloud.width * 2;
+      const x = (cloud.baseX - cloudScroll * cloud.speed) % cloudCycleWidth;
+      const drawX = x < -cloud.width * 1.3 ? x + cloudCycleWidth : x;
+      ctx.fillStyle = `rgba(255,255,255,${cloud.alpha})`;
+      ctx.beginPath();
+      ctx.ellipse(drawX, cloud.y, cloud.width * 0.42, cloud.height * 0.52, 0, 0, Math.PI * 2);
+      ctx.ellipse(drawX + cloud.width * 0.23, cloud.y - cloud.height * 0.2, cloud.width * 0.34, cloud.height * 0.48, 0, 0, Math.PI * 2);
+      ctx.ellipse(drawX - cloud.width * 0.2, cloud.y - cloud.height * 0.15, cloud.width * 0.3, cloud.height * 0.44, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    ctx.fillStyle = state.groundGradient;
+    ctx.fillRect(0, horizonY, state.logicalWidth, groundHeight);
+    ctx.fillStyle = "rgba(255,255,255,0.16)";
+    ctx.fillRect(0, horizonY, state.logicalWidth, 4);
+    ctx.fillStyle = "rgba(74, 63, 28, 0.22)";
+    ctx.fillRect(0, state.logicalHeight - 3, state.logicalWidth, 3);
+
     ctx.fillStyle = state.vignetteGradient;
     ctx.fillRect(0, 0, state.logicalWidth, state.logicalHeight);
   }
 
   function drawPipe(pipe) {
-    const lipHeight = Math.max(5, pipe.width * 0.12);
-    const bodyGradient = ctx.createLinearGradient(pipe.x, 0, pipe.x + pipe.width, 0);
-    bodyGradient.addColorStop(0, "#2f7b2f");
-    bodyGradient.addColorStop(0.5, "#48a43f");
-    bodyGradient.addColorStop(1, "#2f7b2f");
+    const lipHeight = Math.max(6, pipe.width * 0.14);
+    const border = Math.max(2, pipe.width * 0.08);
+    const pipeFill = "#57bf48";
+    const pipeBorder = "#2f812a";
 
     ctx.save();
     ctx.shadowColor = "rgba(12, 28, 10, 0.25)";
     ctx.shadowBlur = 8;
     ctx.shadowOffsetX = 1;
     ctx.shadowOffsetY = 2;
-    ctx.fillStyle = bodyGradient;
+    ctx.fillStyle = pipeFill;
     ctx.fillRect(pipe.x, 0, pipe.width, pipe.top);
     ctx.fillRect(pipe.x, pipe.bottom, pipe.width, state.logicalHeight - pipe.bottom);
+    ctx.strokeStyle = pipeBorder;
+    ctx.lineWidth = border;
+    ctx.strokeRect(pipe.x + border * 0.5, 0, pipe.width - border, pipe.top);
+    ctx.strokeRect(pipe.x + border * 0.5, pipe.bottom, pipe.width - border, state.logicalHeight - pipe.bottom);
     ctx.restore();
 
-    ctx.fillStyle = "#6cc25a";
+    ctx.fillStyle = "#71cf63";
     ctx.fillRect(pipe.x - 2, pipe.top - lipHeight, pipe.width + 4, lipHeight);
     ctx.fillRect(pipe.x - 2, pipe.bottom, pipe.width + 4, lipHeight);
+    ctx.strokeStyle = pipeBorder;
+    ctx.lineWidth = Math.max(1.5, border * 0.8);
+    ctx.strokeRect(pipe.x - 2, pipe.top - lipHeight, pipe.width + 4, lipHeight);
+    ctx.strokeRect(pipe.x - 2, pipe.bottom, pipe.width + 4, lipHeight);
   }
 
   function drawBird(bird) {
-    const radius = 11;
+    const bodyW = 24;
+    const bodyH = 16;
+    const angle = clamp(bird.velocity * 0.055, -0.65, 0.75);
+    const flapWave = bird.flap ? Math.sin((state.frameIndex + bird.rank * 1.7) * 0.5) * 3.2 : -0.8;
     ctx.save();
     ctx.translate(bird.x, bird.y);
-    ctx.rotate(clamp(bird.velocity * 0.06, -0.45, 0.5));
-    ctx.fillStyle = bird.color;
+    ctx.rotate(angle);
+    ctx.shadowColor = "rgba(12, 20, 33, 0.26)";
+    ctx.shadowBlur = 6;
+    ctx.shadowOffsetX = 1;
+    ctx.shadowOffsetY = 2;
+
     ctx.beginPath();
-    ctx.arc(0, 0, radius, 0, Math.PI * 2);
+    ctx.moveTo(-bodyW * 0.48, 0);
+    ctx.quadraticCurveTo(-bodyW * 0.1, -bodyH * 0.7, bodyW * 0.4, -bodyH * 0.18);
+    ctx.quadraticCurveTo(bodyW * 0.62, 0, bodyW * 0.4, bodyH * 0.18);
+    ctx.quadraticCurveTo(-bodyW * 0.1, bodyH * 0.7, -bodyW * 0.48, 0);
+    ctx.closePath();
+    ctx.fillStyle = bird.color;
+    ctx.fill();
+    ctx.strokeStyle = "rgba(10, 22, 38, 0.32)";
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    ctx.fillStyle = "rgba(255,255,255,0.26)";
+    ctx.beginPath();
+    ctx.ellipse(-3.2, -1.4, 6.5, 3.4, -0.2, 0, Math.PI * 2);
     ctx.fill();
 
-    ctx.fillStyle = "rgba(255,255,255,0.28)";
+    ctx.strokeStyle = "rgba(8, 17, 30, 0.42)";
+    ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.ellipse(-2, 2, 7, 4.5, -0.3, 0, Math.PI * 2);
-    ctx.fill();
+    ctx.moveTo(-bodyW * 0.1, 0.5);
+    ctx.lineTo(-bodyW * 0.1 + 8, flapWave);
+    ctx.lineTo(-bodyW * 0.1 + 15, flapWave + 2.2);
+    ctx.stroke();
 
     ctx.fillStyle = "#ffb347";
     ctx.beginPath();
-    ctx.moveTo(radius - 1, -2);
-    ctx.lineTo(radius + 7, 1);
-    ctx.lineTo(radius - 1, 4);
+    ctx.moveTo(bodyW * 0.37, -2);
+    ctx.lineTo(bodyW * 0.74, 0.8);
+    ctx.lineTo(bodyW * 0.37, 3.4);
     ctx.closePath();
     ctx.fill();
 
     ctx.fillStyle = "#0f172a";
     ctx.beginPath();
-    ctx.arc(4, -3, 1.8, 0, Math.PI * 2);
+    ctx.arc(3.2, -3, 1.6, 0, Math.PI * 2);
     ctx.fill();
 
     if (bird.rank === 1) {
       ctx.strokeStyle = "rgba(255, 245, 157, 0.95)";
-      ctx.lineWidth = 2.4;
+      ctx.lineWidth = 2;
       ctx.beginPath();
-      ctx.arc(0, 0, radius + 2.8, 0, Math.PI * 2);
+      ctx.ellipse(-0.5, 0, bodyW * 0.75, bodyH * 0.95, 0, 0, Math.PI * 2);
       ctx.stroke();
     }
     ctx.restore();
