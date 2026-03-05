@@ -61,6 +61,37 @@
 
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
+  function normalizeReplayData(raw) {
+    const generations = Array.isArray(raw?.generations)
+      ? raw.generations
+      : (Array.isArray(raw?.traces) ? raw.traces : []);
+
+    return {
+      ...raw,
+      generations: generations.map((gen, idx) => normalizeGeneration(gen, idx)),
+    };
+  }
+
+  function normalizeGeneration(generation, idx) {
+    const genomes = Array.isArray(generation?.genomes)
+      ? generation.genomes
+      : (Array.isArray(generation?.birds)
+        ? generation.birds
+        : (Array.isArray(generation?.traces) ? generation.traces : []));
+
+    return {
+      ...generation,
+      generation: generation?.generation ?? idx,
+      genomes: genomes.map((g, gIdx) => ({
+        ...g,
+        rank: Number(g?.rank ?? (gIdx + 1)),
+        frames: Array.isArray(g?.frames)
+          ? g.frames
+          : (Array.isArray(g?.trace) ? g.trace : []),
+      })),
+    };
+  }
+
   function getGeneration() {
     return state.data?.generations?.[state.generationIndex] || null;
   }
@@ -108,6 +139,7 @@
       const frame = frames[Math.min(frameIndex, Math.max(0, frames.length - 1))] || {};
       return {
         rank: Number(genome.rank || 1),
+        x: clamp(Number(frame.x ?? cfg.bird_x ?? 80), 0, canvas.width),
         y: clamp(Number(frame.y ?? worldHeight / 2), 0, worldHeight),
         velocity: Number(frame.vy ?? 0),
         alive: Boolean(frame.alive ?? 0),
@@ -118,12 +150,22 @@
       };
     });
 
-    const selected = getGenomeByRank(generation, state.selectedRank);
-    state.pipes = (selected?.pipes || []).map((pipe) => {
-      const halfGap = Number(pipe.gap_h || 0) / 2;
+    const selected = getGenomeByRank(generation, 1);
+    const frames = selected?.frames || [];
+    const frame = frames[Math.min(frameIndex, Math.max(0, frames.length - 1))] || {};
+    const pipeSource = Array.isArray(frame.pipes) && frame.pipes.length
+      ? frame.pipes
+      : (Array.isArray(selected?.pipes) ? selected.pipes : []);
+    const pipeSpeed = Number(cfg.pipe_speed || 0);
+    const t = Number(frame.t ?? frameIndex);
+
+    state.pipes = pipeSource.map((pipe) => {
+      const gapH = Number(pipe.gap_h || cfg.pipe_gap || 170);
+      const halfGap = gapH / 2;
+      const fallbackShift = (!Array.isArray(frame.pipes) || !frame.pipes.length) ? (pipeSpeed * t) : 0;
       return {
-        x: Number(pipe.x),
-        width: Number(cfg.pipe_width || 70),
+        x: Number(pipe.x) - fallbackShift,
+        width: Number(pipe.width || cfg.pipe_width || 70),
         top: Number(pipe.gap_y) - halfGap,
         bottom: Number(pipe.gap_y) + halfGap,
       };
@@ -132,7 +174,7 @@
     if (state.showTrails) {
       state.birds.forEach((bird, idx) => {
         state.trailHistory[idx] = state.trailHistory[idx] || [];
-        state.trailHistory[idx].push({ x: Number(cfg.bird_x || 80), y: bird.y });
+        state.trailHistory[idx].push({ x: bird.x, y: bird.y });
         if (state.trailHistory[idx].length > 120) state.trailHistory[idx].shift();
       });
     } else {
@@ -165,9 +207,8 @@
   }
 
   function drawBird(bird, birdIndex) {
-    const x = Number(state.data?.config?.bird_x || 80);
     ctx.save();
-    ctx.translate(x, bird.y);
+    ctx.translate(bird.x, bird.y);
     ctx.rotate(clamp(bird.velocity * 0.11, -0.65, 0.75));
     ctx.fillStyle = bird.color;
     ctx.beginPath();
@@ -192,17 +233,20 @@
     const generation = getGeneration();
     const total = state.data?.generations?.length || 0;
     const genNum = Number(generation?.generation ?? state.generationIndex);
-    const shownCount = state.showManyBirds ? state.birds.length : Math.min(1, state.birds.length);
+    const shownCount = state.showManyBirds ? (generation?.genomes?.length || 0) : (generation ? 1 : 0);
     const aliveCount = state.birds.filter((b) => b.alive).length;
-    const bestGen = Math.max(0, ...((generation?.genomes || []).map((g) => Number(g.pipes_passed || 0))));
-    const selected = getGenomeByRank(generation, state.selectedRank);
-    const selFrame = (selected?.frames || [])[Math.min(state.frameIndex, Math.max(0, (selected?.frames || []).length - 1))] || {};
+    const bestGen = Math.max(0, ...((generation?.genomes || []).map((g) => {
+      const endFrame = (g.frames || [])[Math.max(0, (g.frames || []).length - 1)] || {};
+      return Math.max(Number(g.pipes_passed || 0), Number(endFrame.pipes_passed || 0));
+    })));
+    const champion = getGenomeByRank(generation, 1);
+    const championFrame = (champion?.frames || [])[Math.min(state.frameIndex, Math.max(0, (champion?.frames || []).length - 1))] || {};
 
     if (els.statGeneration) els.statGeneration.textContent = `${genNum} (idx ${state.generationIndex}, total ${total})`;
     if (els.statBirdsShown) els.statBirdsShown.textContent = String(shownCount);
     if (els.statAlive) els.statAlive.textContent = String(aliveCount);
     if (els.statBestGen) els.statBestGen.textContent = String(bestGen);
-    if (els.statBestAll) els.statBestAll.textContent = String(Number(selFrame.pipes_passed ?? 0));
+    if (els.statBestAll) els.statBestAll.textContent = String(Number(championFrame.pipes_passed ?? 0));
     if (els.statPlayback) els.statPlayback.textContent = state.autoplayEnabled ? "ON (sequential)" : "OFF";
 
     if (els.generationDebugLine) {
@@ -210,7 +254,11 @@
     }
 
     if (els.rankingList) {
-      const top = getSortedGenomes(generation).slice(0, 5).map((g) => `#${g.rank}: ${g.pipes_passed}`).join(" | ");
+      const top = getSortedGenomes(generation).slice(0, 5).map((g) => {
+        const endFrame = (g.frames || [])[Math.max(0, (g.frames || []).length - 1)] || {};
+        const pipesPassed = Math.max(Number(g.pipes_passed || 0), Number(endFrame.pipes_passed || 0));
+        return `#${g.rank}: ${pipesPassed}`;
+      }).join(" | ");
       els.rankingList.textContent = `Top pipes: ${top}`;
     }
   }
@@ -329,10 +377,15 @@
         throw new Error(`HTTP ${response.status} ${response.statusText}\nURL: ${attemptedUrl}`);
       }
       const data = await response.json();
-      if (!Array.isArray(data.generations) || data.generations.length === 0) {
+      const normalized = normalizeReplayData(data);
+      if (!Array.isArray(normalized.generations) || normalized.generations.length === 0) {
         throw new Error("training_replay.json loaded but has 0 generations.");
       }
-      return data;
+      const gen0 = normalized.generations[0] || {};
+      const genome0 = (gen0.genomes || [])[0] || {};
+      console.log("[viewer] gen0 keys:", Object.keys(gen0));
+      console.log("[viewer] genome0 keys:", Object.keys(genome0));
+      return normalized;
     } catch (error) {
       const command = "python main.py --record-training-replay --replay-top-k 30 --replay-episode 0";
       setStatus("Failed to load training replay.");
@@ -352,6 +405,11 @@
     try {
       const data = await fetchReplay();
       state.data = data;
+      const missingGenomes = data.generations.findIndex((g) => !Array.isArray(g.genomes) || g.genomes.length === 0);
+      if (missingGenomes >= 0) {
+        const badGen = data.generations[missingGenomes] || {};
+        throw new Error(`Generation index ${missingGenomes} missing/empty genomes. Available keys: ${Object.keys(badGen).join(", ")}`);
+      }
       if (els.generationSlider) {
         els.generationSlider.min = "0";
         els.generationSlider.max = String(Math.max(0, data.generations.length - 1));
@@ -360,8 +418,9 @@
       setStatus(`Loaded ${data.generations.length} generations from training_replay.json.`);
       loadGeneration(0);
       requestAnimationFrame(animate);
-    } catch {
-      // Error state rendered in hero message.
+    } catch (error) {
+      setStatus("Failed to initialize training replay.");
+      setError(String(error?.message || error));
     }
   }
 
