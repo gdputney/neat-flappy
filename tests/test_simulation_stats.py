@@ -65,8 +65,7 @@ class SimulationStatsTests(unittest.TestCase):
         self.assertEqual(len(simulation_data["generations"]), 2)
         for generation in simulation_data["generations"]:
             self.assertIn("best_steps", generation)
-            self.assertIn("best_pipes_passed_mean", generation)
-            self.assertIn("best_pipes_passed_max", generation)
+            self.assertIn("best_pipes_passed", generation)
             self.assertIn("mean_pipes_passed", generation)
             self.assertIn("best_avg_shaping_reward", generation)
             self.assertIn("best_steps_component", generation)
@@ -75,8 +74,6 @@ class SimulationStatsTests(unittest.TestCase):
             self.assertIn("best_reached_first_pipe_bonus", generation)
             self.assertIn("best_avg_abs_gap_error", generation)
             self.assertIn("best_mean_proximity_weight", generation)
-            self.assertIn("best_episode_pipes_passed_max", generation)
-            self.assertIn("best_episode_pipes_passed_mean", generation)
             self.assertIn("best_hidden_nodes", generation)
             self.assertIn("best_enabled_connections", generation)
             self.assertIn("population_mean_hidden_nodes", generation)
@@ -85,8 +82,8 @@ class SimulationStatsTests(unittest.TestCase):
             genomes = generation["genomes"]
             self.assertEqual(generation["best_steps"], max(genome["steps_alive"] for genome in genomes))
             self.assertEqual(
-                generation["best_pipes_passed_max"],
-                max(max(genome.get("episode_pipes_passed", [genome["pipes_passed"]])) for genome in genomes),
+                generation["best_pipes_passed"],
+                max(genome["pipes_passed"] for genome in genomes),
             )
             self.assertAlmostEqual(
                 generation["mean_pipes_passed"],
@@ -95,13 +92,8 @@ class SimulationStatsTests(unittest.TestCase):
 
             best_genome_result = max(genomes, key=lambda genome: genome["fitness"])
             self.assertAlmostEqual(
-                generation["best_pipes_passed_mean"],
-                sum(best_genome_result.get("episode_pipes_passed", [best_genome_result["pipes_passed"]]))
-                / len(best_genome_result.get("episode_pipes_passed", [best_genome_result["pipes_passed"]])),
-            )
-            self.assertEqual(
-                generation["best_pipes_passed_max"],
-                max(best_genome_result.get("episode_pipes_passed", [best_genome_result["pipes_passed"]])),
+                generation["best_pipes_passed"],
+                best_genome_result["pipes_passed"],
             )
 
             self.assertAlmostEqual(
@@ -168,8 +160,8 @@ class SimulationStatsTests(unittest.TestCase):
             self.assertTrue(generation["curriculum_enabled"])
 
     def test_seeded_run_is_deterministic_for_first_five_generations(self) -> None:
-        config_a = SimulationConfig(generations=5, population_size=20, max_steps=60, seed=7, eval_episodes=2, deterministic_pipes=True, flap_policy="deterministic")
-        config_b = SimulationConfig(generations=5, population_size=20, max_steps=60, seed=7, eval_episodes=2, deterministic_pipes=True, flap_policy="deterministic")
+        config_a = SimulationConfig(generations=5, population_size=20, max_steps=60, seed=7, deterministic_pipes=True, flap_policy="deterministic")
+        config_b = SimulationConfig(generations=5, population_size=20, max_steps=60, seed=7, deterministic_pipes=True, flap_policy="deterministic")
 
         run_a = run_simulation(config_a)
         run_b = run_simulation(config_b)
@@ -178,8 +170,7 @@ class SimulationStatsTests(unittest.TestCase):
             "best_fitness",
             "mean_fitness",
             "median_fitness",
-            "best_pipes_passed_mean",
-            "best_pipes_passed_max",
+            "best_pipes_passed",
             "best_hidden_nodes",
             "best_enabled_connections",
             "best_avg_abs_gap_error",
@@ -188,36 +179,25 @@ class SimulationStatsTests(unittest.TestCase):
             for field in fields:
                 self.assertEqual(generation_a[field], generation_b[field])
 
-    def test_eval_episodes_mean_fitness_is_used(self) -> None:
-        config = SimulationConfig(max_steps=25, seed=8, eval_episodes=3)
+    def test_evaluate_genome_returns_scalar_metrics(self) -> None:
+        config = SimulationConfig(max_steps=25, seed=8)
         tracker = InnovationTracker()
         genome = create_initial_genome(input_size=NETWORK_INPUT_SIZE, output_size=1, tracker=tracker)
 
         evaluated = evaluate_genome(genome, config, generation_index=0, genome_index=0)
 
-        self.assertEqual(evaluated["eval_episodes"], 3)
-        self.assertEqual(len(evaluated["episode_fitnesses"]), 3)
-        self.assertAlmostEqual(
-            evaluated["fitness"],
-            sum(evaluated["episode_fitnesses"]) / len(evaluated["episode_fitnesses"]),
-        )
-        self.assertEqual(len(evaluated["episode_pipes_passed"]), 3)
-        self.assertAlmostEqual(
-            evaluated["pipes_passed"],
-            sum(evaluated["episode_pipes_passed"]) / len(evaluated["episode_pipes_passed"]),
-        )
-        self.assertAlmostEqual(
-            evaluated["pipes_reward"],
-            5000.0 * (sum(evaluated["episode_pipes_passed"]) / len(evaluated["episode_pipes_passed"])),
-        )
+        self.assertNotIn("eval_episodes", evaluated)
+        self.assertNotIn("episode_fitnesses", evaluated)
+        self.assertNotIn("episode_pipes_passed", evaluated)
+        self.assertAlmostEqual(evaluated["pipes_reward"], 5000.0 * evaluated["pipes_passed"])
 
     def test_deterministic_pipe_schedule_repeats_for_same_generation(self) -> None:
         config = SimulationConfig(max_steps=40, seed=9, deterministic_pipes=True, flap_policy="deterministic")
         tracker = InnovationTracker()
         genome = create_initial_genome(input_size=NETWORK_INPUT_SIZE, output_size=1, tracker=tracker)
 
-        pipe_seed = derive_seed(config.seed or 0, 2, 0)
-        action_seed = derive_seed(config.seed or 0, 2, 5, 0, 17)
+        pipe_seed = derive_seed(config.seed or 0, 2)
+        action_seed = derive_seed(config.seed or 0, 2, 5, 17)
 
         first = simulate_genome(genome, config, pipe_rng_seed=pipe_seed, action_rng_seed=action_seed)
         second = simulate_genome(genome, config, pipe_rng_seed=pipe_seed, action_rng_seed=action_seed)
@@ -239,13 +219,12 @@ class SimulationStatsTests(unittest.TestCase):
         output = stream.getvalue()
         self.assertIn("max_steps=17", output)
 
-    def test_generation_pipe_stats_use_episode_mean_and_max(self) -> None:
+    def test_generation_pipe_stats_use_scalar_best_pipes(self) -> None:
         config = SimulationConfig(
             population_size=8,
             generations=1,
             max_steps=120,
             seed=13,
-            eval_episodes=3,
             deterministic_pipes=True,
             flap_policy="deterministic",
         )
@@ -253,11 +232,9 @@ class SimulationStatsTests(unittest.TestCase):
         simulation_data = run_simulation(config)
         generation = simulation_data["generations"][0]
         best_genome = max(generation["genomes"], key=lambda genome: genome["fitness"])
-        episodes = best_genome["episode_pipes_passed"]
-
-        self.assertAlmostEqual(generation["best_pipes_passed_mean"], sum(episodes) / len(episodes))
-        self.assertEqual(generation["best_pipes_passed_max"], max(episodes))
-        self.assertNotIn("best_pipes_passed_sum", generation)
+        self.assertEqual(generation["best_pipes_passed"], best_genome["pipes_passed"])
+        self.assertNotIn("best_pipes_passed_mean", generation)
+        self.assertNotIn("best_pipes_passed_max", generation)
 
 
 
@@ -352,11 +329,10 @@ class CliParsingTests(unittest.TestCase):
         self.assertEqual(args.curriculum_milestones, "5,10")
 
     def test_parse_args_accepts_max_steps(self) -> None:
-        with patch("sys.argv", ["main.py", "--max-steps", "321", "--eval-episodes", "3", "--deterministic-pipes", "--flap-policy", "deterministic"]):
+        with patch("sys.argv", ["main.py", "--max-steps", "321", "--deterministic-pipes", "--flap-policy", "deterministic"]):
             args = parse_args()
 
         self.assertEqual(args.max_steps, 321)
-        self.assertEqual(args.eval_episodes, 3)
         self.assertTrue(args.deterministic_pipes)
         self.assertEqual(args.flap_policy, "deterministic")
 
