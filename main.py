@@ -774,16 +774,16 @@ def evolve_population(population: list[Genome], tracker: InnovationTracker, conf
 def serialize_genome(genome: Genome) -> dict[str, Any]:
     return {
         "fitness": genome.fitness,
-        "node_genes": copy.deepcopy(genome.node_genes),
-        "connection_genes": copy.deepcopy(genome.connection_genes),
+        "node_genes": [node.copy() for node in genome.node_genes],
+        "connection_genes": [connection.copy() for connection in genome.connection_genes],
     }
 
 
 def deserialize_genome(data: dict[str, Any]) -> Genome:
     return Genome(
         fitness=float(data.get("fitness", 0.0)),
-        node_genes=copy.deepcopy(data.get("node_genes", [])),
-        connection_genes=copy.deepcopy(data.get("connection_genes", [])),
+        node_genes=[dict(node) for node in data.get("node_genes", [])],
+        connection_genes=[dict(connection) for connection in data.get("connection_genes", [])],
     )
 
 
@@ -1361,7 +1361,7 @@ def write_web_evolution(
                     "rank": rank,
                     "fitness": float(genome.get("fitness", 0.0)),
                     "pipes_passed": pipes_passed,
-                    "genome_json": copy.deepcopy(genome.get("genome_json")),
+                    "genome_json": genome.get("genome_json"),
                 }
             )
 

@@ -67,6 +67,34 @@ class WebEvolutionExportTests(unittest.TestCase):
             self.assertIn("curriculum_pipe_speed", generation)
             self.assertIn("curriculum_pipe_spacing", generation)
 
+    def test_export_preserves_genome_json_structure(self) -> None:
+        config = SimulationConfig(population_size=10, generations=2, max_steps=25, seed=5)
+        simulation_data = run_simulation(config)
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            out_path = Path(tmp_dir) / "evolution.json"
+            write_web_evolution(
+                simulation_data=simulation_data,
+                config=config,
+                output_path=out_path,
+                top_k=3,
+            )
+
+            payload = json.loads(out_path.read_text(encoding="utf-8"))
+
+        for exported_generation in payload["generations"]:
+            generation_index = exported_generation["generation_index"]
+            source_generation = simulation_data["generations"][generation_index]
+            expected_top = sorted(
+                source_generation["genomes"],
+                key=lambda item: float(item.get("fitness", 0.0)),
+                reverse=True,
+            )[:3]
+
+            self.assertEqual(len(expected_top), len(exported_generation["genomes"]))
+            for exported_genome, source_genome in zip(exported_generation["genomes"], expected_top):
+                self.assertEqual(exported_genome["genome_json"], source_genome["genome_json"])
+
 
 if __name__ == "__main__":
     unittest.main()
