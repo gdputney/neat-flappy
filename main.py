@@ -6,6 +6,7 @@ import argparse
 import copy
 import csv
 import json
+from concurrent.futures import Future, ThreadPoolExecutor
 import subprocess
 import random
 from dataclasses import asdict, dataclass
@@ -1269,6 +1270,13 @@ def write_training_replay(
     return write_json_atomic(output_path, payload, config)
 
 
+def write_simulation_export(simulation_data: dict[str, Any], output_path: Path, config: SimulationConfig) -> Path:
+    json_kwargs = json_dump_kwargs(config)
+    with output_path.open("w", encoding="utf-8") as file:
+        json.dump(simulation_data, file, **json_kwargs)
+    return output_path
+
+
 def get_git_commit() -> str | None:
     try:
         result = subprocess.run(
@@ -1567,16 +1575,65 @@ def main() -> None:
     )
 
     output_path = Path(__file__).resolve().parent / "simulation.json"
-    with output_path.open("w", encoding="utf-8") as file:
-        json.dump(simulation_data, file, **json_kwargs)
 
     runs_dir = Path(__file__).resolve().parent / "runs"
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     run_dir = runs_dir / f"run_{timestamp}"
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    write_stats(simulation_data, run_dir, save_csv=args.csv, config=config)
-    best_genome_path = write_best_genome(simulation_data, run_dir, config=config)
+    task_futures: dict[str, Future[Any]] = {}
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        task_futures["simulation"] = executor.submit(
+            write_simulation_export,
+            simulation_data,
+            output_path,
+            config,
+        )
+        task_futures["stats"] = executor.submit(
+            write_stats,
+            simulation_data,
+            run_dir,
+            args.csv,
+            config,
+        )
+        task_futures["best_genome"] = executor.submit(
+            write_best_genome,
+            simulation_data,
+            run_dir,
+            config,
+        )
+        if args.export_web_evolution:
+            web_evolution_path = Path(__file__).resolve().parent / "web" / "evolution.json"
+            task_futures["web_evolution"] = executor.submit(
+                write_web_evolution,
+                simulation_data,
+                config,
+                web_evolution_path,
+                max(1, args.web_top_k),
+            )
+        if args.record_training_replay:
+            training_replay_path = Path(__file__).resolve().parent / "web" / "training_replay.json"
+            task_futures["training_replay"] = executor.submit(
+                write_training_replay,
+                simulation_data,
+                config,
+                training_replay_path,
+                max(1, args.replay_top_k),
+            )
+
+        completed_tasks: dict[str, Any] = {}
+        task_errors: list[tuple[str, BaseException]] = []
+        for task_name, task_future in task_futures.items():
+            try:
+                completed_tasks[task_name] = task_future.result()
+            except Exception as exc:  # pragma: no cover - defensive aggregation path
+                task_errors.append((task_name, exc))
+
+        if task_errors:
+            details = "; ".join(f"{task}: {error!r}" for task, error in task_errors)
+            raise RuntimeError(f"Failed to write simulation artifacts: {details}")
+
+    best_genome_path = completed_tasks["best_genome"]
     plot_path = write_plot(simulation_data, run_dir) if args.plot else None
 
     if args.record_replay and best_genome_path is not None:
@@ -1586,23 +1643,11 @@ def main() -> None:
         print(f"Saved record replay output: {out_path}")
 
     if args.export_web_evolution:
-        web_evolution_path = Path(__file__).resolve().parent / "web" / "evolution.json"
-        out_path = write_web_evolution(
-            simulation_data=simulation_data,
-            config=config,
-            output_path=web_evolution_path,
-            top_k=max(1, args.web_top_k),
-        )
+        out_path = completed_tasks["web_evolution"]
         print(f"Saved web evolution output: {out_path}")
 
     if args.record_training_replay:
-        training_replay_path = Path(__file__).resolve().parent / "web" / "training_replay.json"
-        out_path = write_training_replay(
-            simulation_data=simulation_data,
-            config=config,
-            output_path=training_replay_path,
-            replay_top_k=max(1, args.replay_top_k),
-        )
+        out_path = completed_tasks["training_replay"]
         print(f"Saved training replay: {out_path}")
 
     print(f"Saved simulation output: {output_path}")
