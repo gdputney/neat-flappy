@@ -1,6 +1,9 @@
 import io
+import subprocess
+import sys
 import unittest
 from contextlib import redirect_stdout
+from pathlib import Path
 from unittest.mock import patch
 
 from bird import Bird
@@ -277,6 +280,49 @@ class SimulationStatsTests(unittest.TestCase):
 
 
 
+class SimulationJsonOutputFlagTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.repo_root = Path(__file__).resolve().parent.parent
+        self.simulation_path = self.repo_root / "simulation.json"
+        self._backup = self.simulation_path.read_bytes() if self.simulation_path.exists() else None
+
+    def tearDown(self) -> None:
+        if self._backup is None:
+            self.simulation_path.unlink(missing_ok=True)
+        else:
+            self.simulation_path.write_bytes(self._backup)
+
+    def run_main(self, *extra_args: str) -> subprocess.CompletedProcess[str]:
+        command = [
+            sys.executable,
+            "main.py",
+            "--generations",
+            "1",
+            "--population-size",
+            "4",
+            "--max-steps",
+            "10",
+            "--seed",
+            "7",
+            *extra_args,
+        ]
+        return subprocess.run(command, cwd=self.repo_root, check=True, capture_output=True, text=True)
+
+    def test_default_run_does_not_write_root_simulation_json(self) -> None:
+        self.simulation_path.unlink(missing_ok=True)
+
+        self.run_main()
+
+        self.assertFalse(self.simulation_path.exists())
+
+    def test_save_simulation_json_flag_writes_root_simulation_json(self) -> None:
+        self.simulation_path.unlink(missing_ok=True)
+
+        self.run_main("--save-simulation-json")
+
+        self.assertTrue(self.simulation_path.exists())
+
+
 class CliParsingTests(unittest.TestCase):
     def test_parse_args_uses_default_generations(self) -> None:
         with patch("sys.argv", ["main.py"]):
@@ -327,6 +373,18 @@ class CliParsingTests(unittest.TestCase):
         self.assertEqual(args.max_steps, 321)
         self.assertTrue(args.deterministic_pipes)
         self.assertEqual(args.flap_policy, "deterministic")
+
+    def test_parse_args_save_simulation_json_defaults_to_false(self) -> None:
+        with patch("sys.argv", ["main.py"]):
+            args = parse_args()
+
+        self.assertFalse(args.save_simulation_json)
+
+    def test_parse_args_accepts_save_simulation_json(self) -> None:
+        with patch("sys.argv", ["main.py", "--save-simulation-json"]):
+            args = parse_args()
+
+        self.assertTrue(args.save_simulation_json)
 
 
 

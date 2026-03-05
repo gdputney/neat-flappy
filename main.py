@@ -1302,6 +1302,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--export-web-evolution", action="store_true")
     parser.add_argument("--web-top-k", type=int, default=20)
     parser.add_argument("--record-training-replay", action="store_true")
+    parser.add_argument(
+        "--save-simulation-json",
+        action="store_true",
+        help="Write simulation.json in the repository root",
+    )
     parser.add_argument("--replay-top-k", type=int, default=20)
     parser.add_argument("--replay-max-steps", type=int, default=None)
     parser.add_argument(
@@ -1437,12 +1442,13 @@ def main() -> None:
 
     task_futures: dict[str, Future[Any]] = {}
     with ThreadPoolExecutor(max_workers=5) as executor:
-        task_futures["simulation"] = executor.submit(
-            write_simulation_export,
-            simulation_data,
-            output_path,
-            config,
-        )
+        if args.save_simulation_json:
+            task_futures["simulation"] = executor.submit(
+                write_simulation_export,
+                simulation_data,
+                output_path,
+                config,
+            )
         task_futures["stats"] = executor.submit(
             write_stats,
             simulation_data,
@@ -1504,7 +1510,8 @@ def main() -> None:
         out_path = completed_tasks["training_replay"]
         print(f"Saved training replay: {out_path}")
 
-    print(f"Saved simulation output: {output_path}")
+    if args.save_simulation_json:
+        print(f"Saved simulation output: {output_path}")
     print(f"Saved run stats: {run_dir / 'stats.json'}")
     if best_genome_path is not None:
         print(f"Saved best genome: {best_genome_path}")
