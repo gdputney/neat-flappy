@@ -40,17 +40,19 @@ Useful options:
 - `--plot` to save `fitness_over_generations.png` in the run folder (requires `matplotlib`).
 - `--replay runs/run_<timestamp>/best_genome.json` to replay a single bird with a saved best genome.
 - `--record-training-replay` to write `web/training_replay.json` for the web viewer.
+- `--save-simulation-json` to additionally write `simulation.json` in the repository root.
 - `--json-pretty` to write human-readable indented JSON (compact JSON is the default for faster/smaller output).
 
 Example:
 
 ```bash
 python main.py --seed 7 --csv --plot --deterministic-pipes --flap-policy deterministic
+
+# Optional: also persist full simulation data at ./simulation.json
+python main.py --seed 7 --save-simulation-json
 ```
 
 Per run, the script now writes:
-
-- `simulation.json` in the repository root (full simulation data).
 
 For long training runs, keep the default compact JSON mode to reduce file size and speed up disk writes. Use `--json-pretty` when you want human-readable indentation.
 
@@ -58,6 +60,8 @@ For long training runs, keep the default compact JSON mode to reduce file size a
 - `runs/run_<timestamp>/fitness.csv` if `--csv` is used.
 - `runs/run_<timestamp>/fitness_over_generations.png` if `--plot` is used.
 - `runs/run_<timestamp>/best_genome.json` with the highest-fitness genome seen across all generations.
+
+When `--save-simulation-json` is enabled, the script also writes `simulation.json` in the repository root.
 
 
 ## Recommended settings to break the ~5-pipe plateau
@@ -112,6 +116,7 @@ from pathlib import Path
 
 path = Path("simulation.json")
 print("exists:", path.exists())
+print("tip: run with --save-simulation-json to create this file")
 if path.exists():
     data = json.loads(path.read_text())
     print("top-level keys:", list(data.keys()))
