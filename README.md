@@ -40,11 +40,18 @@ Useful options:
 - `--plot` to save `fitness_over_generations.png` in the run folder (requires `matplotlib`).
 - `--replay runs/run_<timestamp>/best_genome.json` to replay a single bird with a saved best genome.
 - `--record-training-replay` to write `web/training_replay.json` for the web viewer.
+- `--json-compact` to write compact JSON (no indentation/extra spaces) for faster output on long runs; compact JSON is now the default; use `--json-pretty` for indented output.
 
 Example:
 
 ```bash
 python main.py --seed 7 --csv --plot --deterministic-pipes --flap-policy deterministic
+```
+
+For long training runs that generate large JSON files, prefer compact output to reduce disk write volume:
+
+```bash
+python main.py --generations 200 --record-training-replay
 ```
 
 Per run, the script now writes:
