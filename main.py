@@ -8,6 +8,7 @@ import csv
 import json
 import subprocess
 import random
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
@@ -1546,16 +1547,55 @@ def main() -> None:
     )
 
     output_path = Path(__file__).resolve().parent / "simulation.json"
-    with output_path.open("w", encoding="utf-8") as file:
-        json.dump(simulation_data, file, indent=2)
 
     runs_dir = Path(__file__).resolve().parent / "runs"
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     run_dir = runs_dir / f"run_{timestamp}"
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    write_stats(simulation_data, run_dir, save_csv=args.csv)
-    best_genome_path = write_best_genome(simulation_data, run_dir)
+    write_futures: dict[str, Future[Any]] = {}
+    write_results: dict[str, Any] = {}
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        write_futures["simulation_output"] = executor.submit(write_json_atomic, output_path, simulation_data)
+        write_futures["stats"] = executor.submit(write_stats, simulation_data, run_dir, args.csv)
+        write_futures["best_genome"] = executor.submit(write_best_genome, simulation_data, run_dir)
+
+        if args.export_web_evolution:
+            web_evolution_path = Path(__file__).resolve().parent / "web" / "evolution.json"
+            write_futures["web_evolution"] = executor.submit(
+                write_web_evolution,
+                simulation_data,
+                config,
+                web_evolution_path,
+                max(1, args.web_top_k),
+            )
+
+        if args.record_training_replay:
+            training_replay_path = Path(__file__).resolve().parent / "web" / "training_replay.json"
+            write_futures["training_replay"] = executor.submit(
+                write_training_replay,
+                simulation_data,
+                config,
+                training_replay_path,
+                max(1, args.replay_top_k),
+            )
+
+        write_failures: list[tuple[str, Exception]] = []
+        future_names = {future: name for name, future in write_futures.items()}
+        for future in as_completed(future_names):
+            name = future_names[future]
+            try:
+                write_results[name] = future.result()
+            except Exception as exc:  # pragma: no cover - exercised in runtime failure cases
+                write_failures.append((name, exc))
+
+    if write_failures:
+        failure_summary = "\n".join(
+            f"- {name}: {error.__class__.__name__}: {error}" for name, error in write_failures
+        )
+        raise RuntimeError(f"Failed to write one or more output artifacts:\n{failure_summary}") from write_failures[0][1]
+
+    best_genome_path = write_results.get("best_genome")
     plot_path = write_plot(simulation_data, run_dir) if args.plot else None
 
     if args.record_replay and best_genome_path is not None:
@@ -1565,23 +1605,11 @@ def main() -> None:
         print(f"Saved record replay output: {out_path}")
 
     if args.export_web_evolution:
-        web_evolution_path = Path(__file__).resolve().parent / "web" / "evolution.json"
-        out_path = write_web_evolution(
-            simulation_data=simulation_data,
-            config=config,
-            output_path=web_evolution_path,
-            top_k=max(1, args.web_top_k),
-        )
+        out_path = write_results["web_evolution"]
         print(f"Saved web evolution output: {out_path}")
 
     if args.record_training_replay:
-        training_replay_path = Path(__file__).resolve().parent / "web" / "training_replay.json"
-        out_path = write_training_replay(
-            simulation_data=simulation_data,
-            config=config,
-            output_path=training_replay_path,
-            replay_top_k=max(1, args.replay_top_k),
-        )
+        out_path = write_results["training_replay"]
         print(f"Saved training replay: {out_path}")
 
     print(f"Saved simulation output: {output_path}")
