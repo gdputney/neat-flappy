@@ -67,6 +67,36 @@ class WebEvolutionExportTests(unittest.TestCase):
             self.assertIn("curriculum_pipe_speed", generation)
             self.assertIn("curriculum_pipe_spacing", generation)
 
+    def test_compact_and_pretty_json_contain_identical_payload(self) -> None:
+        config = SimulationConfig(population_size=8, generations=1, max_steps=20, seed=42)
+        simulation_data = run_simulation(config)
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            pretty_path = Path(tmp_dir) / "evolution_pretty.json"
+            compact_path = Path(tmp_dir) / "evolution_compact.json"
+            write_web_evolution(
+                simulation_data=simulation_data,
+                config=config,
+                output_path=pretty_path,
+                top_k=2,
+                json_pretty=True,
+            )
+            write_web_evolution(
+                simulation_data=simulation_data,
+                config=config,
+                output_path=compact_path,
+                top_k=2,
+                json_pretty=False,
+            )
+
+            pretty_text = pretty_path.read_text(encoding="utf-8")
+            compact_text = compact_path.read_text(encoding="utf-8")
+
+        self.assertGreater(pretty_text.count("\n"), 0)
+        self.assertEqual(compact_text.count("\n"), 0)
+        self.assertIn(',"', compact_text)
+        self.assertEqual(json.loads(pretty_text), json.loads(compact_text))
+
 
 if __name__ == "__main__":
     unittest.main()
