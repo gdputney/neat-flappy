@@ -22,13 +22,9 @@ class TrainingReplayExportTests(unittest.TestCase):
             "2",
             "--max-steps",
             "50",
-            "--eval-episodes",
-            "1",
             "--record-training-replay",
             "--replay-top-k",
             "4",
-            "--replay-episode",
-            "0",
         ]
         subprocess.run(cmd, cwd=repo_root, check=True, capture_output=True, text=True)
 
@@ -53,11 +49,13 @@ class TrainingReplayExportTests(unittest.TestCase):
         self.assertIn("gap_h", frame_pipes[0])
 
         for generation in payload.get("generations", []):
+            self.assertNotIn("episode_index", generation)
             genomes = generation.get("genomes", [])
             self.assertLessEqual(len(genomes), 4)
             for genome in genomes:
                 frames = genome.get("frames", [])
                 self.assertLessEqual(len(frames), 50)
+                self.assertNotIn("episode_index", genome.get("meta", {}))
                 if frames:
                     self.assertEqual(frames[-1].get("pipes_passed"), genome.get("pipes_passed"))
 

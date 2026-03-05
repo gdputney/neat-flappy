@@ -53,7 +53,6 @@ class SimulationConfig:
     compatibility_adjust_step: float = 0.02
     min_compatibility_threshold: float = 0.3
     flap_policy: str = "probabilistic"
-    eval_episodes: int = 1
     deterministic_pipes: bool = False
     enable_curriculum: bool = False
     curriculum_mode: str = "global"
@@ -819,62 +818,38 @@ def evaluate_genome(
     pipe_gap: float | None = None,
     pipe_speed: float | None = None,
     pipe_spacing: float | None = None,
-    replay_episode_index: int | None = None,
+    record_replay_trace: bool = False,
     replay_max_steps: int | None = None,
 ) -> dict[str, Any]:
     base_seed = int(config.seed or 0)
-    episode_results: list[dict[str, Any]] = []
+    if config.deterministic_pipes:
+        pipe_seed = derive_seed(base_seed, generation_index)
+    else:
+        pipe_seed = derive_seed(base_seed, generation_index, genome_index)
+    action_seed = derive_seed(base_seed, generation_index, genome_index, 17)
 
-    for episode_index in range(max(1, config.eval_episodes)):
-        if config.deterministic_pipes:
-            pipe_seed = derive_seed(base_seed, generation_index, episode_index)
-        else:
-            pipe_seed = derive_seed(base_seed, generation_index, genome_index, episode_index)
-        action_seed = derive_seed(base_seed, generation_index, genome_index, episode_index, 17)
-        should_record_trace = replay_episode_index is not None and episode_index == replay_episode_index
-        episode_results.append(
-            simulate_genome(
-                genome,
-                config,
-                pipe_rng_seed=pipe_seed,
-                action_rng_seed=action_seed,
-                pipe_gap=pipe_gap,
-                pipe_speed=pipe_speed,
-                pipe_spacing=pipe_spacing,
-                record_trace=should_record_trace,
-                trace_max_steps=replay_max_steps,
-                trace_metadata={
-                    "generation": generation_index,
-                    "genome_index": genome_index,
-                    "episode_index": episode_index,
-                }
-                if should_record_trace
-                else None,
-            )
-        )
+    result = simulate_genome(
+        genome,
+        config,
+        pipe_rng_seed=pipe_seed,
+        action_rng_seed=action_seed,
+        pipe_gap=pipe_gap,
+        pipe_speed=pipe_speed,
+        pipe_spacing=pipe_spacing,
+        record_trace=record_replay_trace,
+        trace_max_steps=replay_max_steps,
+        trace_metadata={
+            "generation": generation_index,
+            "genome_index": genome_index,
+        }
+        if record_replay_trace
+        else None,
+    )
 
-    episode_fitnesses = [result["fitness"] for result in episode_results]
-    episode_pipes_passed = [result["pipes_passed"] for result in episode_results]
-    mean_fitness = sum(episode_fitnesses) / len(episode_results)
-    mean_pipes_passed = sum(episode_pipes_passed) / len(episode_results)
-    genome.fitness = mean_fitness
-    representative = copy.deepcopy(max(episode_results, key=lambda result: result["fitness"]))
-    representative["episode_fitnesses"] = episode_fitnesses
-    representative["episode_pipes_passed"] = episode_pipes_passed
-    representative["fitness"] = mean_fitness
-    representative["pipes_passed"] = mean_pipes_passed
-    representative["pipes_reward"] = sum(result["pipes_reward"] for result in episode_results) / len(episode_results)
-    representative["steps"] = sum(result["steps"] for result in episode_results) / len(episode_results)
-    representative["shaping_reward"] = (
-        sum(result["shaping_reward"] for result in episode_results) / len(episode_results)
-    )
-    representative["reached_first_pipe_bonus"] = (
-        sum(result["reached_first_pipe_bonus"] for result in episode_results) / len(episode_results)
-    )
-    representative["eval_episodes"] = len(episode_results)
-    if replay_episode_index is not None and 0 <= replay_episode_index < len(episode_results):
-        representative["replay_trace"] = copy.deepcopy(episode_results[replay_episode_index].get("trace"))
-    return representative
+    genome.fitness = float(result["fitness"])
+    if record_replay_trace:
+        result["replay_trace"] = copy.deepcopy(result.get("trace"))
+    return result
 
 
 def run_simulation(
@@ -882,7 +857,6 @@ def run_simulation(
     *,
     record_training_replay: bool = False,
     replay_top_k: int = 20,
-    replay_episode: int = 0,
     replay_max_steps: int | None = None,
 ) -> dict[str, Any]:
     if config.seed is not None:
@@ -919,7 +893,7 @@ def run_simulation(
                 pipe_gap=effective_gap,
                 pipe_speed=effective_speed,
                 pipe_spacing=effective_spacing,
-                replay_episode_index=replay_episode if record_training_replay else None,
+                record_replay_trace=record_training_replay,
                 replay_max_steps=replay_max_steps,
             )
             generation_results.append(
@@ -949,13 +923,7 @@ def run_simulation(
         best_steps = max(steps_alive)
         mean_pipes_passed = sum(result["pipes_passed"] for result in generation_results) / len(generation_results)
         best_result = max(generation_results, key=lambda result: result["fitness"])
-        best_episode_pipes_passed = best_result.get("episode_pipes_passed", [best_result.get("pipes_passed", 0)])
-        best_episode_pipes_passed_max = max(best_episode_pipes_passed) if best_episode_pipes_passed else 0
-        best_episode_pipes_passed_mean = (
-            sum(best_episode_pipes_passed) / len(best_episode_pipes_passed)
-            if best_episode_pipes_passed
-            else 0.0
-        )
+        best_pipes_passed = int(best_result.get("pipes_passed", 0))
         best_avg_shaping_reward = best_result.get("average_shaping_reward", 0.0)
         best_avg_abs_gap_error = best_result.get("avg_abs_gap_error", 0.0)
         best_mean_proximity_weight = best_result.get("mean_proximity_weight", 0.0)
@@ -987,11 +955,11 @@ def run_simulation(
                 champion = max(group, key=lambda candidate: candidate.fitness)
                 champion_index = population.index(champion)
                 champion_result = result_by_genome_index[champion_index]
-                candidate_max = max(champion_result.get("episode_pipes_passed", [champion_result.get("pipes_passed", 0)]))
-                species_champion_max = max(species_champion_max, candidate_max)
+                candidate_pipes = int(champion_result.get("pipes_passed", 0))
+                species_champion_max = max(species_champion_max, candidate_pipes)
             updated_best_pipes_ever = max(best_pipes_ever, species_champion_max)
         else:
-            updated_best_pipes_ever = max(best_pipes_ever, best_episode_pipes_passed_max)
+            updated_best_pipes_ever = max(best_pipes_ever, best_pipes_passed)
 
         print(
             f"Generation {generation_index + 1}/{config.generations}: "
@@ -1000,8 +968,7 @@ def run_simulation(
             f"threshold={threshold_used:.2f}->{next_threshold:.2f} "
             f"max_steps={config.max_steps} "
             f"best_steps={best_steps} "
-            f"best_pipes_passed_mean={best_episode_pipes_passed_mean:.2f} "
-            f"best_pipes_passed_max={best_episode_pipes_passed_max} "
+            f"best_pipes_passed={best_pipes_passed} "
             f"mean_pipes_passed={mean_pipes_passed:.2f} "
             f"best_steps_component={best_steps_component:.2f} "
             f"best_pipes_reward={best_pipes_reward:.2f} "
@@ -1031,8 +998,7 @@ def run_simulation(
                 "compatibility_threshold": threshold_used,
                 "next_compatibility_threshold": next_threshold,
                 "best_steps": best_steps,
-                "best_pipes_passed_mean": best_episode_pipes_passed_mean,
-                "best_pipes_passed_max": best_episode_pipes_passed_max,
+                "best_pipes_passed": best_pipes_passed,
                 "mean_pipes_passed": mean_pipes_passed,
                 "best_steps_component": best_steps_component,
                 "best_pipes_reward": best_pipes_reward,
@@ -1041,8 +1007,6 @@ def run_simulation(
                 "best_avg_shaping_reward": best_avg_shaping_reward,
                 "best_avg_abs_gap_error": best_avg_abs_gap_error,
                 "best_mean_proximity_weight": best_mean_proximity_weight,
-                "best_episode_pipes_passed_max": best_episode_pipes_passed_max,
-                "best_episode_pipes_passed_mean": best_episode_pipes_passed_mean,
                 "best_hidden_nodes": best_hidden_nodes,
                 "best_enabled_connections": best_enabled_connections,
                 "population_mean_hidden_nodes": population_mean_hidden_nodes,
@@ -1077,7 +1041,6 @@ def run_simulation(
                         "meta": {
                             "generation": generation_index,
                             "genome_index": int(result.get("genome_index", -1)),
-                            "episode_index": replay_episode,
                             "fitness_episode": trace.get("meta", {}).get("fitness_episode", 0.0),
                             "pipes_passed_episode": trace.get("meta", {}).get("pipes_passed_episode", 0),
                             "steps_alive_episode": trace.get("meta", {}).get("steps_alive_episode", len(trace_frames)),
@@ -1089,7 +1052,6 @@ def run_simulation(
             output.setdefault("training_replay", []).append(
                 {
                     "generation": generation_index,
-                    "episode_index": replay_episode,
                     "top_k": max(1, replay_top_k),
                     "genomes": generation_replay_genomes,
                 }
@@ -1117,8 +1079,7 @@ def write_stats(simulation_data: dict[str, Any], run_dir: Path, save_csv: bool) 
             "compatibility_threshold": generation.get("compatibility_threshold", 0.0),
             "next_compatibility_threshold": generation.get("next_compatibility_threshold", 0.0),
             "best_steps": generation.get("best_steps", 0),
-            "best_pipes_passed_mean": generation.get("best_pipes_passed_mean", 0.0),
-            "best_pipes_passed_max": generation.get("best_pipes_passed_max", 0),
+            "best_pipes_passed": generation.get("best_pipes_passed", 0),
             "mean_pipes_passed": generation.get("mean_pipes_passed", 0.0),
             "best_steps_component": generation.get("best_steps_component", 0.0),
             "best_pipes_reward": generation.get("best_pipes_reward", 0.0),
@@ -1127,8 +1088,6 @@ def write_stats(simulation_data: dict[str, Any], run_dir: Path, save_csv: bool) 
             "best_avg_shaping_reward": generation.get("best_avg_shaping_reward", 0.0),
             "best_avg_abs_gap_error": generation.get("best_avg_abs_gap_error", 0.0),
             "best_mean_proximity_weight": generation.get("best_mean_proximity_weight", 0.0),
-            "best_episode_pipes_passed_max": generation.get("best_episode_pipes_passed_max", 0),
-            "best_episode_pipes_passed_mean": generation.get("best_episode_pipes_passed_mean", 0.0),
             "best_hidden_nodes": generation.get("best_hidden_nodes", 0),
             "best_enabled_connections": generation.get("best_enabled_connections", 0),
             "population_mean_hidden_nodes": generation.get("population_mean_hidden_nodes", 0.0),
@@ -1158,36 +1117,7 @@ def write_stats(simulation_data: dict[str, Any], run_dir: Path, save_csv: bool) 
             writer = csv.DictWriter(
                 file,
                 fieldnames=[
-                    "generation",
-                    "best_fitness",
-                    "mean_fitness",
-                    "median_fitness",
-                    "species_count",
-                    "compatibility_threshold",
-                    "next_compatibility_threshold",
-                    "best_steps",
-                    "best_pipes_passed_mean",
-                    "best_pipes_passed_max",
-                    "mean_pipes_passed",
-                    "best_steps_component",
-                    "best_pipes_reward",
-                    "best_shaping_reward",
-                    "best_reached_first_pipe_bonus",
-                    "best_avg_shaping_reward",
-                    "best_avg_abs_gap_error",
-                    "best_mean_proximity_weight",
-                    "best_episode_pipes_passed_max",
-                    "best_episode_pipes_passed_mean",
-                    "best_hidden_nodes",
-                    "best_enabled_connections",
-                    "population_mean_hidden_nodes",
-                    "population_mean_enabled_connections",
-                    "curriculum_enabled",
-                    "curriculum_level",
-                    "curriculum_best_pipes_ever",
-                    "curriculum_gap",
-                    "curriculum_pipe_speed",
-                    "curriculum_pipe_spacing",
+                    *generation_stats[0].keys(),
                 ],
             )
             writer.writeheader()
@@ -1322,7 +1252,6 @@ def write_training_replay(
     config: SimulationConfig,
     output_path: Path,
     replay_top_k: int,
-    replay_episode: int,
 ) -> Path:
     replay_generations = simulation_data.get("training_replay", [])
     payload = {
@@ -1331,7 +1260,6 @@ def write_training_replay(
             "seed": config.seed,
             "max_steps": config.max_steps,
             "replay_top_k": replay_top_k,
-            "replay_episode": replay_episode,
             "flap_policy": config.flap_policy,
             "world_width": config.world_width,
             "world_height": config.world_height,
@@ -1364,7 +1292,6 @@ def write_web_evolution(
     config: SimulationConfig,
     output_path: Path,
     top_k: int,
-    eval_episode: int,
 ) -> Path:
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -1383,7 +1310,6 @@ def write_web_evolution(
             "git_commit": get_git_commit(),
             "seed": config.seed,
             "top_k": top_k,
-            "episode_index": eval_episode,
             "flap_policy": config.flap_policy,
             "config": {
                 "max_steps": config.max_steps,
@@ -1417,7 +1343,7 @@ def write_web_evolution(
     base_seed = int(config.seed or 0)
     for generation in simulation_data.get("generations", []):
         generation_index = int(generation.get("generation", 0))
-        pipe_seed = derive_seed(base_seed, generation_index, eval_episode)
+        pipe_seed = derive_seed(base_seed, generation_index)
         genomes = sorted(
             generation.get("genomes", []),
             key=lambda item: float(item.get("fitness", 0.0)),
@@ -1425,15 +1351,12 @@ def write_web_evolution(
         )
         top_genomes = []
         for rank, genome in enumerate(genomes[: max(1, top_k)], start=1):
-            episode_pipes = genome.get("episode_pipes_passed", [genome.get("pipes_passed", 0)])
-            pipes_passed_max = max(episode_pipes) if episode_pipes else 0
-            pipes_passed_mean = float(genome.get("pipes_passed", 0.0))
+            pipes_passed = int(genome.get("pipes_passed", 0))
             top_genomes.append(
                 {
                     "rank": rank,
                     "fitness": float(genome.get("fitness", 0.0)),
-                    "pipes_passed_mean": pipes_passed_mean,
-                    "pipes_passed_max": pipes_passed_max,
+                    "pipes_passed": pipes_passed,
                     "genome_json": copy.deepcopy(genome.get("genome_json")),
                 }
             )
@@ -1442,7 +1365,6 @@ def write_web_evolution(
             {
                 "generation_index": generation_index,
                 "pipe_seed": pipe_seed,
-                "episode_index": eval_episode,
                 "curriculum_level": generation.get("curriculum_level", -1),
                 "curriculum_best_pipes_ever": generation.get("curriculum_best_pipes_ever", 0),
                 "curriculum_gap": generation.get("curriculum_gap", config.pipe_gap),
@@ -1507,10 +1429,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--export-web-evolution", action="store_true")
     parser.add_argument("--web-top-k", type=int, default=20)
-    parser.add_argument("--web-eval-episode", type=int, default=0)
     parser.add_argument("--record-training-replay", action="store_true")
     parser.add_argument("--replay-top-k", type=int, default=20)
-    parser.add_argument("--replay-episode", type=int, default=0)
     parser.add_argument("--replay-max-steps", type=int, default=None)
     parser.add_argument(
         "--flap-policy",
@@ -1518,7 +1438,6 @@ def parse_args() -> argparse.Namespace:
         default="probabilistic",
         help="Policy for converting network output to flap action",
     )
-    parser.add_argument("--eval-episodes", type=int, default=SimulationConfig.eval_episodes)
     parser.add_argument("--deterministic-pipes", action="store_true")
     parser.add_argument("--enable-curriculum", action="store_true")
     parser.add_argument("--curriculum-mode", choices=["global", "species"], default=SimulationConfig.curriculum_mode)
@@ -1596,7 +1515,6 @@ def main() -> None:
         velocity_min=min(args.vel_min, args.vel_max),
         velocity_max=max(args.vel_min, args.vel_max),
         ceiling_touch_penalty=max(0.0, args.ceiling_touch_penalty),
-        eval_episodes=max(1, args.eval_episodes),
         deterministic_pipes=args.deterministic_pipes,
         enable_curriculum=args.enable_curriculum,
         curriculum_mode=args.curriculum_mode,
@@ -1640,7 +1558,6 @@ def main() -> None:
         config,
         record_training_replay=args.record_training_replay,
         replay_top_k=max(1, args.replay_top_k),
-        replay_episode=max(0, min(args.replay_episode, config.eval_episodes - 1)),
         replay_max_steps=max(1, args.replay_max_steps) if args.replay_max_steps is not None else config.max_steps,
     )
 
@@ -1670,19 +1587,16 @@ def main() -> None:
             config=config,
             output_path=web_evolution_path,
             top_k=max(1, args.web_top_k),
-            eval_episode=max(0, args.web_eval_episode),
         )
         print(f"Saved web evolution output: {out_path}")
 
     if args.record_training_replay:
         training_replay_path = Path(__file__).resolve().parent / "web" / "training_replay.json"
-        replay_episode = max(0, min(args.replay_episode, config.eval_episodes - 1))
         out_path = write_training_replay(
             simulation_data=simulation_data,
             config=config,
             output_path=training_replay_path,
             replay_top_k=max(1, args.replay_top_k),
-            replay_episode=replay_episode,
         )
         print(f"Saved training replay: {out_path}")
 

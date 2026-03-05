@@ -28,7 +28,6 @@ python main.py
 Useful options:
 
 - `--seed <int>` for deterministic runs.
-- `--eval-episodes <int>` to evaluate each genome over multiple episodes and use mean fitness (default `1`).
 - `--deterministic-pipes` to force the same per-generation pipe sequence across all genomes.
 - `--flap-policy {probabilistic,hysteresis,deterministic}` to choose stochastic vs thresholded flap control.
 - `--population-size <int>` to set the number of genomes per generation (default `100`).
@@ -45,7 +44,7 @@ Useful options:
 Example:
 
 ```bash
-python main.py --seed 7 --csv --plot --eval-episodes 3 --deterministic-pipes --flap-policy deterministic
+python main.py --seed 7 --csv --plot --deterministic-pipes --flap-policy deterministic
 ```
 
 Per run, the script now writes:
@@ -61,7 +60,6 @@ Per run, the script now writes:
 
 Use these training knobs to reduce evaluation noise and stabilize species dynamics:
 
-- `--eval-episodes 3`
 - `--deterministic-pipes`
 - `--population-size 100`
 - `--target-species 8`
@@ -71,12 +69,12 @@ Use these training knobs to reduce evaluation noise and stabilize species dynami
 Suggested training command:
 
 ```bash
-python main.py --seed 7 --eval-episodes 3 --deterministic-pipes --population-size 100 --target-species 8 --compatibility-adjust-step 0.02 --flap-policy deterministic --enable-curriculum --curriculum-mode global --curriculum-milestones 10,25,50,100 --curriculum-gap-deltas 2,5,10,18 --curriculum-speed-deltas 0.05,0.10,0.20,0.35 --curriculum-spacing-deltas 0,0,5,10 --csv --plot
+python main.py --seed 7 --deterministic-pipes --population-size 100 --target-species 8 --compatibility-adjust-step 0.02 --flap-policy deterministic --enable-curriculum --curriculum-mode global --curriculum-milestones 10,25,50,100 --curriculum-gap-deltas 2,5,10,18 --curriculum-speed-deltas 0.05,0.10,0.20,0.35 --curriculum-spacing-deltas 0,0,5,10 --csv --plot
 ```
 
 Outputs are written to:
 
-- `runs/run_<timestamp>/stats.json` (includes per-generation `best_episode_pipes_passed_max`, `best_episode_pipes_passed_mean`, and curriculum telemetry fields)
+- `runs/run_<timestamp>/stats.json` (includes per-generation `best_pipes_passed`, `mean_pipes_passed`, and curriculum telemetry fields)
 - `runs/run_<timestamp>/best_genome.json`
 - `runs/run_<timestamp>/fitness.csv` (if `--csv`)
 - `runs/run_<timestamp>/fitness_over_generations.png` (if `--plot`)
@@ -126,7 +124,7 @@ python main.py --replay runs/run_<timestamp>/best_genome.json --seed 7
 Generate a training replay for the web viewer:
 
 ```bash
-python main.py --record-training-replay --replay-top-k 30 --replay-episode 0
+python main.py --record-training-replay --replay-top-k 30
 ```
 
 ## Web training replay viewer
