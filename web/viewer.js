@@ -404,11 +404,9 @@
     ctx.strokeRect(pipe.x - 2, pipe.bottom, pipe.width + 4, lipHeight);
   }
 
-  function drawBird(bird) {
-    const bodyW = 25;
-    const bodyH = 17;
-    const angle = clamp(bird.velocity * 0.055, -0.65, 0.75);
-    const flapWave = bird.flap ? Math.sin((state.playT + bird.rank * 1.7) * 0.5) * 2.3 : -1.2;
+  function drawBird(bird, birdIndex, config) {
+    const angle = clamp(bird.velocity * 0.11, -0.65, 0.75);
+    const wingLift = bird.flap ? Math.sin((state.playT + bird.rank * 1.7) * 0.5) * 2.3 : -1.2;
     ctx.save();
     ctx.translate(bird.x, bird.y);
     ctx.rotate(angle);
@@ -418,53 +416,43 @@
     ctx.shadowOffsetY = 2;
 
     ctx.beginPath();
-    ctx.moveTo(-bodyW * 0.48, -bodyH * 0.5);
-    ctx.lineTo(bodyW * 0.58, 0);
-    ctx.lineTo(-bodyW * 0.48, bodyH * 0.5);
+    ctx.moveTo(14, 0);
+    ctx.quadraticCurveTo(1, -7.8, -10, -7);
+    ctx.quadraticCurveTo(-12, 0, -10, 7);
+    ctx.quadraticCurveTo(1, 7.8, 14, 0);
     ctx.closePath();
     ctx.fillStyle = bird.color;
     ctx.fill();
-    ctx.strokeStyle = "rgba(10, 22, 38, 0.32)";
+    ctx.strokeStyle = "rgba(0,0,0,0.3)";
     ctx.lineWidth = 1.5;
     ctx.stroke();
 
     ctx.fillStyle = "rgba(255,255,255,0.24)";
     ctx.beginPath();
-    ctx.moveTo(-bodyW * 0.24, -bodyH * 0.3);
-    ctx.lineTo(bodyW * 0.1, -bodyH * 0.07);
-    ctx.lineTo(-bodyW * 0.24, bodyH * 0.02);
+    ctx.moveTo(-2.5, -4.5);
+    ctx.lineTo(7.8, -1);
+    ctx.lineTo(-2.5, 1.3);
     ctx.closePath();
     ctx.fill();
 
     ctx.fillStyle = "rgba(8, 17, 30, 0.42)";
     ctx.beginPath();
-    ctx.moveTo(-bodyW * 0.1, 1);
-    ctx.lineTo(-bodyW * 0.28, flapWave + 5.2);
-    ctx.lineTo(bodyW * 0.08, flapWave + 2.4);
+    ctx.moveTo(-2, 0);
+    ctx.lineTo(-10, -6 - wingLift);
+    ctx.lineTo(-7.4, 1.2);
     ctx.closePath();
     ctx.fill();
 
-    ctx.fillStyle = "#ffb347";
+    ctx.fillStyle = "#ffffff";
     ctx.beginPath();
-    ctx.moveTo(bodyW * 0.53, -2);
-    ctx.lineTo(bodyW * 0.78, 0.8);
-    ctx.lineTo(bodyW * 0.53, 3.4);
-    ctx.closePath();
-    ctx.fill();
-
-    ctx.fillStyle = "#0f172a";
-    ctx.beginPath();
-    ctx.arc(1.2, -2.7, 1.6, 0, Math.PI * 2);
+    ctx.arc(6, -2, 1.8, 0, Math.PI * 2);
     ctx.fill();
 
     if (bird.rank === 1) {
-      ctx.strokeStyle = "rgba(255, 245, 157, 0.95)";
+      ctx.strokeStyle = "#ffd54f";
       ctx.lineWidth = 2;
       ctx.beginPath();
-      ctx.moveTo(-bodyW * 0.6, -bodyH * 0.58);
-      ctx.lineTo(bodyW * 0.7, 0);
-      ctx.lineTo(-bodyW * 0.6, bodyH * 0.58);
-      ctx.closePath();
+      ctx.arc(0, 0, 14, 0, Math.PI * 2);
       ctx.stroke();
     }
     ctx.restore();
@@ -567,7 +555,7 @@
         ctx.stroke();
       }
     });
-    state.birds.forEach(drawBird);
+    state.birds.forEach((bird, birdIndex) => drawBird(bird, birdIndex, state.replay?.config || {}));
 
     if (state.generationMessage) {
       ctx.fillStyle = "rgba(17,24,39,0.84)";
