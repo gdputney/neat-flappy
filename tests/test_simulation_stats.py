@@ -32,45 +32,6 @@ from main import (
 
 
 class SimulationStatsTests(unittest.TestCase):
-    @staticmethod
-    def _expected_shaping_reward_total(result: dict, config: SimulationConfig) -> float:
-        shaping_reward_total = 0.0
-        previous_abs_gap_error_norm = None
-
-        for frame in result["frames"]:
-            pipes = frame["pipes"]
-            if not pipes:
-                continue
-
-            bird_x = frame["bird"]["x"]
-            ahead_pipes = [pipe for pipe in pipes if (pipe["x"] + pipe["width"]) >= bird_x]
-            if not ahead_pipes:
-                continue
-
-            next_pipe = min(ahead_pipes, key=lambda pipe: pipe["x"])
-            gap_center = (next_pipe["top"] + next_pipe["bottom"]) / 2.0
-            half_gap_height = max((next_pipe["bottom"] - next_pipe["top"]) / 2.0, 1e-6)
-            abs_gap_error = abs(frame["bird"]["y"] - gap_center) / half_gap_height
-            dx_to_next_pipe = next_pipe["x"] - bird_x
-            proximity = proximity_weight(dx_to_next_pipe=dx_to_next_pipe, ramp_distance=config.pipe_spacing)
-            clamped_abs_gap_error = clamp(abs_gap_error, 0.0, config.abs_gap_error_clamp)
-            normalized_abs_gap_error = clamp(
-                clamped_abs_gap_error / max(config.abs_gap_error_clamp, 1e-6),
-                0.0,
-                1.0,
-            )
-
-            if config.enable_centering_reward:
-                shaping_reward_total += config.centering_reward_scale * (1.0 - normalized_abs_gap_error) * proximity
-
-            if config.enable_progress_reward and previous_abs_gap_error_norm is not None:
-                progress = previous_abs_gap_error_norm - normalized_abs_gap_error
-                progress = clamp(progress, -config.progress_reward_clamp, config.progress_reward_clamp)
-                shaping_reward_total += config.progress_reward_scale * progress * proximity
-
-            previous_abs_gap_error_norm = normalized_abs_gap_error
-        return shaping_reward_total
-
     def test_generation_stats_include_pipe_and_step_metrics(self) -> None:
         config = SimulationConfig(population_size=6, generations=2, max_steps=20, seed=7)
 
@@ -290,7 +251,7 @@ class SimulationStatsTests(unittest.TestCase):
             + (FIRST_PIPE_REACHED_BONUS if result["reached_first_pipe_bonus"] > 0 else 0.0)
             + result["alive_bonus"]
             + (
-                self._expected_shaping_reward_total(result, config)
+                ShapingSignalTests.expected_shaping_reward_total(result, config)
                 * config.shaping_weight
                 * config.shaping_scale
             )
@@ -370,6 +331,46 @@ class CliParsingTests(unittest.TestCase):
 
 
 class ShapingSignalTests(unittest.TestCase):
+    @staticmethod
+    def expected_shaping_reward_total(result: dict, config: SimulationConfig) -> float:
+        """Reconstruct shaping from frames to validate simulate_genome reward behavior."""
+        shaping_reward_total = 0.0
+        previous_abs_gap_error_norm = None
+
+        for frame in result["frames"]:
+            pipes = frame["pipes"]
+            if not pipes:
+                continue
+
+            bird_x = frame["bird"]["x"]
+            ahead_pipes = [pipe for pipe in pipes if (pipe["x"] + pipe["width"]) >= bird_x]
+            if not ahead_pipes:
+                continue
+
+            next_pipe = min(ahead_pipes, key=lambda pipe: pipe["x"])
+            gap_center = (next_pipe["top"] + next_pipe["bottom"]) / 2.0
+            half_gap_height = max((next_pipe["bottom"] - next_pipe["top"]) / 2.0, 1e-6)
+            abs_gap_error = abs(frame["bird"]["y"] - gap_center) / half_gap_height
+            dx_to_next_pipe = next_pipe["x"] - bird_x
+            proximity = proximity_weight(dx_to_next_pipe=dx_to_next_pipe, ramp_distance=config.pipe_spacing)
+            clamped_abs_gap_error = clamp(abs_gap_error, 0.0, config.abs_gap_error_clamp)
+            normalized_abs_gap_error = clamp(
+                clamped_abs_gap_error / max(config.abs_gap_error_clamp, 1e-6),
+                0.0,
+                1.0,
+            )
+
+            if config.enable_centering_reward:
+                shaping_reward_total += config.centering_reward_scale * (1.0 - normalized_abs_gap_error) * proximity
+
+            if config.enable_progress_reward and previous_abs_gap_error_norm is not None:
+                progress = previous_abs_gap_error_norm - normalized_abs_gap_error
+                progress = clamp(progress, -config.progress_reward_clamp, config.progress_reward_clamp)
+                shaping_reward_total += config.progress_reward_scale * progress * proximity
+
+            previous_abs_gap_error_norm = normalized_abs_gap_error
+        return shaping_reward_total
+
     def test_reported_shaping_reward_matches_frame_reconstruction(self) -> None:
         config = SimulationConfig(max_steps=20, seed=19)
         tracker = InnovationTracker()
@@ -377,7 +378,7 @@ class ShapingSignalTests(unittest.TestCase):
 
         result = simulate_genome(genome, config)
 
-        expected_total = SimulationStatsTests._expected_shaping_reward_total(result, config)
+        expected_total = self.expected_shaping_reward_total(result, config)
         self.assertAlmostEqual(result["shaping_reward_total"], expected_total)
 
     def test_proximity_weight_scales_with_distance_to_next_pipe(self) -> None:
