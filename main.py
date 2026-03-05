@@ -844,7 +844,6 @@ def run_simulation(
     output: dict[str, Any] = {
         "config": asdict(config),
         "generations": [],
-        "position_history": {},
     }
 
     best_genome: Genome | None = None
@@ -880,13 +879,6 @@ def run_simulation(
                     **result,
                 }
             )
-            output["position_history"][f"g{generation_index}_genome{genome_index}"] = {
-                str(frame["step"]): {
-                    "bird": frame["bird"],
-                    "pipes": frame["pipes"],
-                }
-                for frame in result["frames"]
-            }
             if best_genome is None or genome.fitness > best_genome.fitness:
                 best_genome = copy.deepcopy(genome)
                 best_generation = generation_index
@@ -1042,6 +1034,7 @@ def run_simulation(
         "genome_index": best_genome_index,
         "genome": serialize_genome(best_genome) if best_genome is not None else None,
     }
+    output["position_history"] = build_position_history_from_generations(output["generations"])
     return output
 
 

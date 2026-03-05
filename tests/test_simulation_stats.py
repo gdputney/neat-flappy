@@ -28,6 +28,7 @@ from main import (
     proximity_weight,
     normalize_inputs,
     compute_curriculum_params,
+    frames_to_position_history,
 )
 
 
@@ -192,6 +193,22 @@ class SimulationStatsTests(unittest.TestCase):
         for generation_a, generation_b in zip(run_a["generations"], run_b["generations"]):
             for field in fields:
                 self.assertEqual(generation_a[field], generation_b[field])
+
+    def test_position_history_matches_frames_schema(self) -> None:
+        config = SimulationConfig(population_size=4, generations=1, max_steps=20, seed=11)
+
+        simulation_data = run_simulation(config)
+
+        for generation in simulation_data["generations"]:
+            generation_index = generation["generation"]
+            for genome in generation["genomes"]:
+                genome_index = genome["genome_index"]
+                key = f"g{generation_index}_genome{genome_index}"
+                self.assertIn(key, simulation_data["position_history"])
+                self.assertEqual(
+                    simulation_data["position_history"][key],
+                    frames_to_position_history(genome["frames"]),
+                )
 
     def test_evaluate_genome_returns_scalar_metrics(self) -> None:
         config = SimulationConfig(max_steps=25, seed=8)
