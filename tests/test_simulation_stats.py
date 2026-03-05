@@ -8,7 +8,6 @@ from pipe import Pipe
 
 from main import (
     FIRST_PIPE_REACHED_BONUS,
-    FITNESS_CENTERING_PENALTY_SCALE,
     SHAPING_SCALE,
     ALIVE_BONUS_AFTER_FIRST_PIPE,
     InnovationTracker,
@@ -25,8 +24,7 @@ from main import (
     evaluate_genome,
     run_simulation,
     simulate_genome,
-    normalized_gap_center_distance,
-    bounded_gap_shaping,
+    clamp,
     proximity_weight,
     normalize_inputs,
     compute_curriculum_params,
@@ -35,8 +33,10 @@ from main import (
 
 class SimulationStatsTests(unittest.TestCase):
     @staticmethod
-    def _expected_centering_penalty(result: dict, pipe_spacing: float) -> float:
-        penalty = 0.0
+    def _expected_shaping_reward_total(result: dict, config: SimulationConfig) -> float:
+        shaping_reward_total = 0.0
+        previous_abs_gap_error_norm = None
+
         for frame in result["frames"]:
             pipes = frame["pipes"]
             if not pipes:
@@ -52,10 +52,24 @@ class SimulationStatsTests(unittest.TestCase):
             half_gap_height = max((next_pipe["bottom"] - next_pipe["top"]) / 2.0, 1e-6)
             abs_gap_error = abs(frame["bird"]["y"] - gap_center) / half_gap_height
             dx_to_next_pipe = next_pipe["x"] - bird_x
-            penalty += FITNESS_CENTERING_PENALTY_SCALE * bounded_gap_shaping(abs_gap_error) * proximity_weight(
-                dx_to_next_pipe=dx_to_next_pipe, ramp_distance=pipe_spacing
+            proximity = proximity_weight(dx_to_next_pipe=dx_to_next_pipe, ramp_distance=config.pipe_spacing)
+            clamped_abs_gap_error = clamp(abs_gap_error, 0.0, config.abs_gap_error_clamp)
+            normalized_abs_gap_error = clamp(
+                clamped_abs_gap_error / max(config.abs_gap_error_clamp, 1e-6),
+                0.0,
+                1.0,
             )
-        return penalty
+
+            if config.enable_centering_reward:
+                shaping_reward_total += config.centering_reward_scale * (1.0 - normalized_abs_gap_error) * proximity
+
+            if config.enable_progress_reward and previous_abs_gap_error_norm is not None:
+                progress = previous_abs_gap_error_norm - normalized_abs_gap_error
+                progress = clamp(progress, -config.progress_reward_clamp, config.progress_reward_clamp)
+                shaping_reward_total += config.progress_reward_scale * progress * proximity
+
+            previous_abs_gap_error_norm = normalized_abs_gap_error
+        return shaping_reward_total
 
     def test_generation_stats_include_pipe_and_step_metrics(self) -> None:
         config = SimulationConfig(population_size=6, generations=2, max_steps=20, seed=7)
@@ -259,11 +273,12 @@ class SimulationStatsTests(unittest.TestCase):
             + (result["pipes_passed"] * 5000.0)
             + (FIRST_PIPE_REACHED_BONUS if result["reached_first_pipe_bonus"] > 0 else 0.0)
             + result["alive_bonus"]
-            - (
-                self._expected_centering_penalty(result, config.pipe_spacing)
+            + (
+                self._expected_shaping_reward_total(result, config)
                 * config.shaping_weight
                 * config.shaping_scale
             )
+            - result["ceiling_penalty"]
         )
         self.assertAlmostEqual(result["fitness"], expected)
         self.assertEqual(result["pipes_reward"], result["pipes_passed"] * 5000.0)
@@ -373,27 +388,15 @@ class DebugOneEpisodeTests(unittest.TestCase):
 
 
 class ShapingSignalTests(unittest.TestCase):
-    def test_dy_to_gap_is_zero_when_no_pipe_ahead(self) -> None:
-        bird = Bird(world_width=500.0, world_height=800.0)
-        bird.x = 200.0
-        bird.y = 400.0
+    def test_reported_shaping_reward_matches_frame_reconstruction(self) -> None:
+        config = SimulationConfig(max_steps=20, seed=19)
+        tracker = InnovationTracker()
+        genome = create_initial_genome(input_size=NETWORK_INPUT_SIZE, output_size=1, tracker=tracker)
 
-        behind_pipe = Pipe(x=10.0, world_height=800.0)
-        behind_pipe.width = 50.0
+        result = simulate_genome(genome, config)
 
-        self.assertEqual(
-            normalized_gap_center_distance(bird=bird, pipes=[behind_pipe], world_height=800.0),
-            0.0,
-        )
-
-
-
-    def test_bounded_gap_shaping_is_clipped_to_unit_interval(self) -> None:
-        self.assertEqual(bounded_gap_shaping(-2.0), 0.0)
-        self.assertEqual(bounded_gap_shaping(0.0), 0.0)
-        self.assertAlmostEqual(bounded_gap_shaping(0.5), 0.25)
-        self.assertEqual(bounded_gap_shaping(1.0), 1.0)
-        self.assertEqual(bounded_gap_shaping(4.0), 1.0)
+        expected_total = SimulationStatsTests._expected_shaping_reward_total(result, config)
+        self.assertAlmostEqual(result["shaping_reward_total"], expected_total)
 
     def test_proximity_weight_scales_with_distance_to_next_pipe(self) -> None:
         ramp = 220.0
