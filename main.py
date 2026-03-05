@@ -1116,20 +1116,22 @@ def write_training_replay(
     replay_top_k: int,
 ) -> Path:
     replay_generations = simulation_data.get("training_replay", [])
+    bird_defaults = Bird(world_width=config.world_width, world_height=config.world_height)
+    config_payload = {
+        "seed": config.seed,
+        "max_steps": config.max_steps,
+        "replay_top_k": replay_top_k,
+        "flap_policy": config.flap_policy,
+        "world_width": config.world_width,
+        "world_height": config.world_height,
+        "pipe_gap": config.pipe_gap,
+        "pipe_speed": config.pipe_speed,
+        "pipe_spacing": config.pipe_spacing,
+        "bird_x": bird_defaults.x,
+    }
     payload = {
         "version": 1,
-        "config": {
-            "seed": config.seed,
-            "max_steps": config.max_steps,
-            "replay_top_k": replay_top_k,
-            "flap_policy": config.flap_policy,
-            "world_width": config.world_width,
-            "world_height": config.world_height,
-            "pipe_gap": config.pipe_gap,
-            "pipe_speed": config.pipe_speed,
-            "pipe_spacing": config.pipe_spacing,
-            "bird_x": Bird(world_width=config.world_width, world_height=config.world_height).x,
-        },
+        "config": config_payload,
         "generations": replay_generations,
     }
     return write_json_atomic(output_path, payload, config)
