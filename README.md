@@ -40,7 +40,7 @@ Useful options:
 - `--curriculum-milestones`, `--curriculum-gap-deltas`, `--curriculum-speed-deltas`, and `--curriculum-spacing-deltas` to define curriculum thresholds and per-level environment changes.
 - `--plot` to save `fitness_over_generations.png` in the run folder (requires `matplotlib`).
 - `--replay runs/run_<timestamp>/best_genome.json` to replay a single bird with a saved best genome.
-- `--record-replay` to write `web/simulation.json` from a best-genome replay using fixed-`dt` frames.
+- `--record-training-replay` to write `web/training_replay.json` for the web viewer.
 
 Example:
 
@@ -123,62 +123,32 @@ Replay a saved best genome:
 python main.py --replay runs/run_<timestamp>/best_genome.json --seed 7
 ```
 
-Record replay frames for a web viewer:
+Generate a training replay for the web viewer:
 
 ```bash
-python main.py --seed 7 --record-replay
+python main.py --record-training-replay --replay-top-k 30 --replay-episode 0
 ```
 
-Or from an existing saved best genome:
+## Web training replay viewer
 
-```bash
-python main.py --replay runs/run_<timestamp>/best_genome.json --record-replay
-```
-
-## Web replay viewer
-
-After generating `web/simulation.json` with `--record-replay`, open:
+Serve from the repo root, then open the viewer:
 
 ```bash
 python -m http.server 8000
 ```
 
-Then visit `http://localhost:8000/web/` to view the replay on an HTML canvas with:
+Open `http://localhost:8000/web/`. The viewer loads exactly `./training_replay.json` (relative to `/web/`), so the replay file must exist at `web/training_replay.json`.
 
-- Play/Pause control
-- Playback speed slider
-- Overlay text showing score and generation
+Viewer controls include:
 
-## Web evolution viewer
+- generation scrubber (by index)
+- play/pause
+- speed control
+- sequential autoplay across generations
+- Show many birds
+- Show Brain (rank 1 only; output is shown as `(not recorded)` if absent in frame data)
 
-Export evolution data, then serve the repo and open the web app:
-
-```bash
-python main.py --export-web-evolution --deterministic-pipes
-python -m http.server 8000
-```
-
-Open `http://localhost:8000/web/` and use the overlay panel to:
-
-- scrub generations with Prev/Next or the generation slider
-- play/pause autoplay across generations
-- adjust autoplay interval (`500`-`3000` ms per generation)
-- toggle trails, champion-only highlight, and debug overlay labels
-- toggle **Show Brain** to inspect the champion's live neural activations and wiring
-- monitor generation stats (alive birds, current/all-time best pipes, and deterministic pipe seed)
-
-When **Show Brain** is enabled, the neural panel displays the rank-1 genome (or the single replay bird):
-
-- input vector in Python order:
-  1. `y_norm` (bird y centered to `[-1, 1]`)
-  2. `velocity_norm` (bird velocity normalized to `[-1, 1]`)
-  3. `dx_to_next_pipe_norm` (horizontal distance to next pipe in `[0, 1]`)
-  4. `gap_error_norm` (bird offset from gap center in `[-1, 1]`)
-  5. `dy_to_gap_top_norm` (delta to gap top in `[-1, 1]`)
-  6. `dy_to_gap_bottom_norm` (delta to gap bottom in `[-1, 1]`)
-- output activation and current flap decision
-- deterministic flap state details (cooldown counter + hysteresis on/off)
-- node-link diagram where node brightness tracks live activation and edge color/width encodes weight sign/magnitude
+Replay frames now include compact per-frame pipe geometry (`pipes: [{x, width, gap_y, gap_h}]`) so the web viewer draws exactly what training recorded without re-simulating pipes.
 
 ## Visualize a saved genome
 

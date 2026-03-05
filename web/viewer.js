@@ -1,665 +1,300 @@
 (() => {
   const canvas = document.getElementById("simCanvas");
-  if (!canvas) {
-    console.error("viewer.js: missing #simCanvas");
-    return;
-  }
-  const ctx = canvas.getContext("2d");
-  const playPauseBtn = document.getElementById("playPauseBtn");
-  const prevGenBtn = document.getElementById("prevGenBtn");
-  const nextGenBtn = document.getElementById("nextGenBtn");
-  const generationSlider = document.getElementById("generationSlider");
-  const speedSlider = document.getElementById("speedSlider");
-  const autoplayToggle = document.getElementById("autoplayToggle");
-  const trailToggle = document.getElementById("trailToggle");
-  const championOnlyToggle = document.getElementById("championOnlyToggle");
-  const debugToggle = document.getElementById("debugToggle");
-  const showBrainToggle = document.getElementById("showBrainToggle");
-  const showManyBirdsToggle = document.getElementById("showManyBirdsToggle");
-  const statusEl = document.getElementById("status");
-  const modeLabelEl = document.getElementById("modeLabel");
-  const modeBadgeEl = document.getElementById("modeBadge");
-  const errorMessageEl = document.getElementById("errorMessage");
-  const rankingList = document.getElementById("rankingList");
-  const rankSelector = document.getElementById("rankSelector");
-  const brainPanel = document.getElementById("brainPanel");
-  const brainInputsEl = document.getElementById("brainInputs");
-  const brainOutputEl = document.getElementById("brainOutput");
-  const brainDecisionEl = document.getElementById("brainDecision");
-  const brainFlapStateEl = document.getElementById("brainFlapState");
-  const brainCanvas = document.getElementById("brainCanvas");
-  const brainCtx = brainCanvas ? brainCanvas.getContext("2d") : null;
+  const ctx = canvas?.getContext("2d");
+  if (!canvas || !ctx) return;
 
-  const statGeneration = document.getElementById("statGeneration");
-  const statBirdsShown = document.getElementById("statBirdsShown");
-  const statAlive = document.getElementById("statAlive");
-  const statBestGen = document.getElementById("statBestGen");
-  const statBestAll = document.getElementById("statBestAll");
-  const statPlayback = document.getElementById("statPlayback");
-  const statSeed = document.getElementById("statSeed");
-  const statCurriculumLevel = document.getElementById("statCurriculumLevel");
-  const statCurriculumBestEver = document.getElementById("statCurriculumBestEver");
-  const statCurriculumGap = document.getElementById("statCurriculumGap");
-  const statCurriculumSpeed = document.getElementById("statCurriculumSpeed");
-  const statCurriculumSpacing = document.getElementById("statCurriculumSpacing");
-  const milestoneBanner = document.getElementById("milestoneBanner");
-  const generationDebugLine = document.getElementById("generationDebugLine");
-  const generationSliderLabel = document.querySelector('label[for="generationSlider"]');
+  const els = {
+    playPauseBtn: document.getElementById("playPauseBtn"),
+    prevGenBtn: document.getElementById("prevGenBtn"),
+    nextGenBtn: document.getElementById("nextGenBtn"),
+    generationSlider: document.getElementById("generationSlider"),
+    speedSlider: document.getElementById("speedSlider"),
+    autoplayToggle: document.getElementById("autoplayToggle"),
+    trailToggle: document.getElementById("trailToggle"),
+    debugToggle: document.getElementById("debugToggle"),
+    showBrainToggle: document.getElementById("showBrainToggle"),
+    showManyBirdsToggle: document.getElementById("showManyBirdsToggle"),
+    status: document.getElementById("status"),
+    modeBadge: document.getElementById("modeBadge"),
+    errorMessage: document.getElementById("errorMessage"),
+    rankingList: document.getElementById("rankingList"),
+    rankSelector: document.getElementById("rankSelector"),
+    generationDebugLine: document.getElementById("generationDebugLine"),
+    brainPanel: document.getElementById("brainPanel"),
+    brainInputs: document.getElementById("brainInputs"),
+    brainOutput: document.getElementById("brainOutput"),
+    brainDecision: document.getElementById("brainDecision"),
+    brainFlapState: document.getElementById("brainFlapState"),
+    brainCanvas: document.getElementById("brainCanvas"),
+    statGeneration: document.getElementById("statGeneration"),
+    statBirdsShown: document.getElementById("statBirdsShown"),
+    statAlive: document.getElementById("statAlive"),
+    statBestGen: document.getElementById("statBestGen"),
+    statBestAll: document.getElementById("statBestAll"),
+    statPlayback: document.getElementById("statPlayback"),
+  };
+  const brainCtx = els.brainCanvas?.getContext("2d");
 
   const state = {
     data: null,
     generationIndex: 0,
-    generationNumberToIndex: new Map(),
-    availableGenerationNumbers: [],
-    currentGenerationNumber: 0,
-    currentGenObj: null,
-    currentRank: null,
+    frameIndex: 0,
     playing: true,
     autoplayEnabled: true,
-    stepAccumulator: 0,
-    lastTimestamp: 0,
-    maxSteps: 5000,
-    generationDone: false,
-    pipes: [],
-    birds: [],
-    nextPipeIndexPerBird: [],
-    pipeRngState: 1,
-    bestScore: 0,
+    simSpeedMultiplier: 1.5,
     showTrails: false,
-    showChampionOnly: false,
     showDebug: false,
     showBrain: false,
-    trailHistory: [],
-    step: 0,
-    simSpeedMultiplier: 1.5,
-    bestPipesAllTime: 0,
-    renderTimeMs: 0,
-    mode: "evolution",
-    replayData: null,
-    replayGenerations: [],
-    replayFrames: [],
-    replayPipes: [],
-    replayFrameIndex: 0,
-    replayScore: 0,
-    selectedRank: 1,
     showManyBirds: false,
-    runtimeCache: new WeakMap(),
-    brainView: {
-      championBird: null,
-      inputs: null,
-      outputs: null,
-      activations: null,
-      flapDecision: false,
-    },
-    currentDifficulty: null,
-    milestoneBannerText: "",
-    milestoneBannerExpiresStep: -1,
-    clouds: [
-      { x: 30, y: 72, speed: 4, scale: 1.0, alpha: 0.2 },
-      { x: 200, y: 120, speed: 7, scale: 1.35, alpha: 0.17 },
-      { x: 390, y: 56, speed: 6, scale: 0.9, alpha: 0.22 },
-      { x: 140, y: 190, speed: 5, scale: 1.15, alpha: 0.14 },
-    ],
+    selectedRank: 1,
+    stepAccumulator: 0,
+    lastTimestamp: 0,
+    renderTimeMs: 0,
+    birds: [],
+    pipes: [],
+    trailHistory: [],
+    missingPipeDataWarning: false,
+    generationTraceWarning: "",
+    worldWidth: 500,
+    worldHeight: 800,
+    birdX: 80,
   };
 
-  const INPUT_LABELS = [
-    "y_norm",
-    "velocity_norm",
-    "dx_to_next_pipe_norm",
-    "gap_error_norm",
-    "dy_to_gap_top_norm",
-    "dy_to_gap_bottom_norm",
-  ];
+  const setStatus = (text) => { if (els.status) els.status.textContent = text; };
+  const setError = (text) => { if (els.errorMessage) els.errorMessage.textContent = text; };
+  if (els.modeBadge) els.modeBadge.textContent = "TRAINING REPLAY";
 
-  function setStatus(text) {
-    if (statusEl) statusEl.textContent = text;
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+  const candidateGenerationKeys = ["generations", "gens", "data"];
+  const candidateTraceKeys = ["traces", "birds", "top_k", "genomes"];
+  const candidateFramesKeys = ["frames", "steps", "trajectory"];
+
+  function normalizeFrame(frame, index, fallbackX = null) {
+    if (!frame || typeof frame !== "object") {
+      return {
+        t: index,
+        x: fallbackX,
+        y: null,
+        vy: 0,
+        alive: true,
+        flap: false,
+        pipes_passed: 0,
+        out: null,
+        pipes: [],
+      };
+    }
+    const normalizedPipes = Array.isArray(frame.pipes)
+      ? frame.pipes.map((pipe) => {
+        if (!pipe || typeof pipe !== "object") return null;
+        const width = Number(pipe.width ?? 70);
+        const hasGapCompact = Number.isFinite(Number(pipe.gap_y)) && Number.isFinite(Number(pipe.gap_h));
+        if (hasGapCompact) {
+          return {
+            x: Number(pipe.x ?? 0),
+            width,
+            gap_y: Number(pipe.gap_y),
+            gap_h: Number(pipe.gap_h),
+          };
+        }
+        if (Number.isFinite(Number(pipe.top)) && Number.isFinite(Number(pipe.bottom))) {
+          return {
+            x: Number(pipe.x ?? 0),
+            width,
+            gap_y: (Number(pipe.top) + Number(pipe.bottom)) / 2,
+            gap_h: Number(pipe.bottom) - Number(pipe.top),
+          };
+        }
+        return null;
+      }).filter(Boolean)
+      : [];
+
+    return {
+      t: Number(frame.t ?? frame.step ?? index),
+      x: Number.isFinite(Number(frame.x)) ? Number(frame.x) : fallbackX,
+      y: Number.isFinite(Number(frame.y)) ? Number(frame.y) : null,
+      vy: Number(frame.vy ?? frame.velocity ?? 0),
+      alive: Boolean(frame.alive ?? 1),
+      flap: Boolean(frame.flap ?? 0),
+      pipes_passed: Number(frame.pipes_passed ?? frame.score ?? 0),
+      out: frame.out ?? frame.output ?? null,
+      pipes: normalizedPipes,
+    };
   }
 
-  function setModeLabel(text) {
-    if (modeLabelEl) modeLabelEl.textContent = text;
-    if (modeBadgeEl) modeBadgeEl.textContent = isReplayMode() ? "REPLAY" : "EVOLUTION";
+  function normalizeTrace(trace, index) {
+    if (!trace || typeof trace !== "object") return null;
+    const framesSource = candidateFramesKeys.map((key) => trace[key]).find((value) => Array.isArray(value)) || [];
+    const rank = Number(trace.rank ?? trace.k ?? index + 1);
+    const fitness = Number(trace.fitness ?? trace.score ?? 0);
+    const fallbackX = Number.isFinite(Number(trace.x)) ? Number(trace.x) : null;
+    const frames = framesSource.map((frame, frameIndex) => normalizeFrame(frame, frameIndex, fallbackX));
+    return {
+      rank: Number.isFinite(rank) ? rank : index + 1,
+      fitness: Number.isFinite(fitness) ? fitness : 0,
+      pipes_passed: Number(trace.pipes_passed ?? (frames.length ? frames[frames.length - 1].pipes_passed : 0)),
+      frames,
+    };
   }
 
-  function setErrorMessage(text) {
-    if (errorMessageEl) errorMessageEl.textContent = text;
+  function normalizeGeneration(generation, index) {
+    const generationObj = generation && typeof generation === "object" ? generation : {};
+    const tracesSource = candidateTraceKeys
+      .map((key) => generationObj[key])
+      .find((value) => Array.isArray(value)) || [];
+    const traces = tracesSource.map((trace, traceIndex) => normalizeTrace(trace, traceIndex)).filter(Boolean);
+    const generationNumber = Number(generationObj.generation ?? generationObj.gen ?? generationObj.id ?? index);
+    return {
+      ...generationObj,
+      generation: Number.isFinite(generationNumber) ? generationNumber : index,
+      genomes: traces,
+    };
   }
 
-  function isReplayMode() {
-    return state.mode === "replay";
+  function normalizeReplayData(rawData) {
+    const generationsSource = candidateGenerationKeys
+      .map((key) => rawData?.[key])
+      .find((value) => Array.isArray(value)) || [];
+    const normalizedGenerations = generationsSource.map((generation, index) => normalizeGeneration(generation, index));
+    const normalized = {
+      ...rawData,
+      generations: normalizedGenerations,
+      config: {
+        ...(rawData?.config || {}),
+      },
+    };
+
+    console.log("[training-replay] resolved generations length:", normalizedGenerations.length);
+    console.log("[training-replay] first generation keys:", Object.keys(normalizedGenerations[0] || {}));
+    console.log("[training-replay] extracted traces in gen0:", (normalizedGenerations[0]?.genomes || []).length);
+    return normalized;
   }
 
-  function configureControlsForMode() {
-    const replay = isReplayMode();
-    if (prevGenBtn) prevGenBtn.hidden = replay;
-    if (nextGenBtn) nextGenBtn.hidden = replay;
-    autoplayToggle?.closest("label")?.toggleAttribute("hidden", replay);
-    if (generationSlider) generationSlider.hidden = false;
-    generationSliderLabel?.toggleAttribute("hidden", false);
-    trailToggle?.closest("label")?.toggleAttribute("hidden", replay);
-    championOnlyToggle?.closest("label")?.toggleAttribute("hidden", replay);
-    debugToggle?.closest("label")?.toggleAttribute("hidden", replay);
-    if (rankingList) rankingList.hidden = false;
-    if (rankSelector) rankSelector.hidden = !replay;
-    if (generationDebugLine) generationDebugLine.hidden = replay;
-  }
-
-  function getCurrentGeneration() {
-    if (isReplayMode()) return null;
+  function getGeneration() {
     return state.data?.generations?.[state.generationIndex] || null;
   }
 
-  function emitUpdateEvent() {
-    document.dispatchEvent(new CustomEvent("flappy-viewer:update", {
-      detail: {
-        mode: state.mode,
-        generationIndex: state.generationIndex,
-        currentGeneration: getCurrentGeneration(),
-      },
-    }));
+  function getSortedGenomes(generation) {
+    return [...(generation?.genomes || [])].sort((a, b) => Number(a.rank || 999) - Number(b.rank || 999));
   }
 
-  function getSelectedReplayGeneration() {
-    return state.replayGenerations[state.generationIndex] || null;
+  function getGenomeByRank(generation, rank) {
+    return getSortedGenomes(generation).find((g) => Number(g.rank) === Number(rank)) || getSortedGenomes(generation)[0] || null;
+  }
+
+  function getLongestFrameCount(generation) {
+    return Math.max(0, ...getSortedGenomes(generation).map((g) => (g.frames || []).length));
   }
 
   function refreshRankSelector() {
-    const generation = getSelectedReplayGeneration();
-    if (!rankSelector || !generation) return;
-    rankSelector.innerHTML = "";
-    for (const genome of generation.genomes || []) {
+    const generation = getGeneration();
+    if (!generation || !els.rankSelector) return;
+    const genomes = getSortedGenomes(generation);
+    els.rankSelector.innerHTML = "";
+    for (const genome of genomes) {
       const option = document.createElement("option");
       option.value = String(genome.rank);
       option.textContent = `Rank ${genome.rank}`;
-      rankSelector.appendChild(option);
+      els.rankSelector.appendChild(option);
     }
     const desired = String(state.selectedRank || 1);
-    rankSelector.value = [...rankSelector.options].some((o) => o.value === desired)
+    els.rankSelector.value = [...els.rankSelector.options].some((o) => o.value === desired)
       ? desired
-      : rankSelector.options[0]?.value || "1";
-    state.selectedRank = Number(rankSelector.value || 1);
+      : (els.rankSelector.options[0]?.value || "1");
+    state.selectedRank = Number(els.rankSelector.value || 1);
   }
 
-  function getReplayGenomeByRank(rank) {
-    const generation = getSelectedReplayGeneration();
-    if (!generation) return null;
-    return (generation.genomes || []).find((g) => Number(g.rank) === Number(rank)) || generation.genomes?.[0] || null;
-  }
+  function applyFrame(frameIndex) {
+    const generation = getGeneration();
+    if (!generation) return;
+    const cfg = state.data?.config || {};
+    const worldHeight = Number(cfg.world_height || canvas.height);
 
-  function applyReplayFrame(frameIndex) {
-    const generation = getSelectedReplayGeneration();
-    const selectedGenome = getReplayGenomeByRank(state.selectedRank);
-    if (!generation || !selectedGenome) return;
-    const replayConfig = state.replayData?.config || {};
-    const pipeWidth = Number(replayConfig.pipe_width ?? 70);
-    const birdX = Number(replayConfig.bird_x ?? 80);
-    const worldHeight = Number(replayConfig.world_height ?? canvas.height);
-    const worldWidth = Number(replayConfig.world_width ?? canvas.width);
+    const traces = getSortedGenomes(generation);
+    if (traces.length === 0) {
+      const keys = Object.keys(generation || {});
+      state.generationTraceWarning = `No bird traces found in generation object. Available keys: ${keys.join(", ")}`;
+      console.error("No bird traces found in generation object", generation);
+      state.birds = [];
+      state.pipes = [];
+      state.missingPipeDataWarning = true;
+      return;
+    }
+    state.generationTraceWarning = "";
 
-    const frameAt = (genome, idx) => {
+    const shown = state.showManyBirds ? traces : [getGenomeByRank(generation, state.selectedRank)].filter(Boolean);
+
+    state.frameIndex = frameIndex;
+    state.birds = shown.map((genome, idx) => {
       const frames = genome.frames || [];
-      if (!frames.length) return null;
-      return frames[Math.min(idx, frames.length - 1)];
-    };
-
-    state.replayFrameIndex = frameIndex;
-    const primaryFrame = frameAt(selectedGenome, frameIndex);
-    state.replayScore = Number(primaryFrame?.pipes_passed ?? 0);
-    state.step = Number(primaryFrame?.t ?? frameIndex);
-    state.pipes = (selectedGenome.pipes || []).map((pipe) => ({
-      x: Number(pipe.x),
-      width: pipeWidth,
-      top: Number(pipe.gap_y) - (Number(pipe.gap_h) / 2),
-      bottom: Number(pipe.gap_y) + (Number(pipe.gap_h) / 2),
-    }));
-
-    const birdsSource = state.showManyBirds ? (generation.genomes || []) : [selectedGenome];
-    state.birds = birdsSource.map((genome, idx) => {
-      const frame = frameAt(genome, frameIndex) || {};
+      const frame = frames[Math.min(frameIndex, Math.max(0, frames.length - 1))] || {};
       return {
-        y: clamp(Number(frame.y ?? (worldHeight / 2)), 0, worldHeight),
+        rank: Number(genome.rank || 1),
+        x: Number.isFinite(Number(frame.x)) ? Number(frame.x) : state.birdX,
+        y: clamp(Number(frame.y ?? worldHeight / 2), 0, worldHeight),
         velocity: Number(frame.vy ?? 0),
-        alive: Boolean(frame.alive ?? 0),
-        color: `hsla(${Math.round((idx * 360) / Math.max(1, birdsSource.length))}, 85%, 52%, 0.72)`,
-        score: Number(frame.pipes_passed ?? 0),
-        rank: Number(genome.rank ?? 1),
-        isFlapping: Boolean(frame.flap ?? 0),
-        flapCooldown: 0,
+        alive: Boolean(frame.alive ?? 1),
+        flap: Boolean(frame.flap ?? 0),
+        out: frame.out,
+        pipesPassed: Number(frame.pipes_passed ?? 0),
+        color: `hsla(${Math.round((idx * 360) / Math.max(1, shown.length))}, 85%, 52%, 0.72)`,
       };
     });
 
-    state.currentGenObj = { generation: generation.generation, genomes: generation.genomes || [] };
+    const selected = getGenomeByRank(generation, state.selectedRank);
+    const selectedFrames = selected?.frames || [];
+    const selectedFrame = selectedFrames[Math.min(frameIndex, Math.max(0, selectedFrames.length - 1))] || {};
+    const framePipes = Array.isArray(selectedFrame.pipes) ? selectedFrame.pipes : [];
+    state.missingPipeDataWarning = framePipes.length === 0;
+    state.pipes = framePipes.map((pipe) => {
+      const halfGap = Number(pipe.gap_h || 0) / 2;
+      return {
+        x: Number(pipe.x),
+        width: Number(pipe.width || cfg.pipe_width || 70),
+        top: Number(pipe.gap_y) - halfGap,
+        bottom: Number(pipe.gap_y) + halfGap,
+      };
+    });
 
-    if (!state.data) {
-      state.data = { metadata: { config: {} }, generations: [] };
-    }
-    state.data.metadata = state.data.metadata || {};
-    state.data.metadata.config = {
-      ...state.data.metadata.config,
-      bird_x: birdX,
-      world_height: worldHeight,
-      world_width: worldWidth,
-      pipe_width: pipeWidth,
-    };
-  }
-
-  function mulberry32(seed) {
-    let t = seed >>> 0;
-    return () => {
-      t += 0x6d2b79f5;
-      let x = Math.imul(t ^ (t >>> 15), 1 | t);
-      x ^= x + Math.imul(x ^ (x >>> 7), 61 | x);
-      return ((x ^ (x >>> 14)) >>> 0) / 4294967296;
-    };
-  }
-
-  function clamp(value, low, high) {
-    return Math.max(low, Math.min(high, value));
-  }
-
-  function sigmoid(x) {
-    return 1 / (1 + Math.exp(-x));
-  }
-
-  function normalizeInputs(bird, pipes, config) {
-    const height = config.world_height > 0 ? config.world_height : 1.0;
-    const width = config.world_width > 0 ? config.world_width : 1.0;
-    const maxAbsVelocity = Math.max(Math.abs(config.velocity_min), Math.abs(config.velocity_max), 1e-6);
-    const aheadPipes = pipes.filter((p) => p.x + p.width >= config.bird_x);
-    const nextPipe = aheadPipes.length ? aheadPipes.reduce((a, b) => (a.x < b.x ? a : b)) : null;
-
-    const yNorm = clamp((2 * (bird.y / height)) - 1, -1, 1);
-    const velocityNorm = clamp(bird.velocity / maxAbsVelocity, -1, 1);
-
-    if (!nextPipe) {
-      return [yNorm, velocityNorm, 1.0, 0.0, 0.0, 0.0];
-    }
-
-    const gapCenter = (nextPipe.top + nextPipe.bottom) / 2;
-    const halfGapHeight = Math.max((nextPipe.bottom - nextPipe.top) / 2, 1e-6);
-    const dxNorm = clamp((nextPipe.x - config.bird_x) / width, 0, 1);
-    const gapErrorNorm = clamp((bird.y - gapCenter) / halfGapHeight, -1, 1);
-    const dyTopNorm = clamp((nextPipe.top - bird.y) / height, -1, 1);
-    const dyBottomNorm = clamp((nextPipe.bottom - bird.y) / height, -1, 1);
-    return [yNorm, velocityNorm, dxNorm, gapErrorNorm, dyTopNorm, dyBottomNorm];
-  }
-
-  function computeTopoOrder(nodeIds, edges) {
-    const indegree = new Map(nodeIds.map((id) => [id, 0]));
-    const outgoing = new Map(nodeIds.map((id) => [id, []]));
-    for (const edge of edges) {
-      const inNode = Number(edge.in_node);
-      const outNode = Number(edge.out_node);
-      indegree.set(outNode, (indegree.get(outNode) || 0) + 1);
-      outgoing.get(inNode)?.push(outNode);
-    }
-    const queue = [...indegree.entries()].filter(([, d]) => d === 0).map(([id]) => id);
-    const topo = [];
-    while (queue.length) {
-      const current = queue.shift();
-      topo.push(current);
-      for (const outNode of outgoing.get(current) || []) {
-        indegree.set(outNode, (indegree.get(outNode) || 0) - 1);
-        if ((indegree.get(outNode) || 0) === 0) queue.push(outNode);
-      }
-    }
-    return { topo, cyclic: topo.length !== nodeIds.length };
-  }
-
-  function getGenomeRuntime(genomeJson) {
-    if (state.runtimeCache.has(genomeJson)) {
-      return state.runtimeCache.get(genomeJson);
-    }
-
-    const nodes = genomeJson.node_genes || [];
-    const nodeIds = nodes.map((n) => Number(n.id));
-    const nodeTypes = nodes.map((n) => String(n.type || "hidden"));
-    const biases = new Float64Array(nodes.map((n) => Number(n.bias || 0.0)));
-    const idToIndex = new Map(nodeIds.map((id, idx) => [id, idx]));
-    const inputNodeIndices = [];
-    const outputNodeIndices = [];
-    const hiddenNodeIndices = [];
-
-    for (let i = 0; i < nodes.length; i += 1) {
-      const type = nodeTypes[i];
-      if (type === "input") inputNodeIndices.push(i);
-      else if (type === "output") outputNodeIndices.push(i);
-      else hiddenNodeIndices.push(i);
-    }
-
-    const allConnections = (genomeJson.connection_genes || []).map((edge) => ({
-      inIndex: idToIndex.get(Number(edge.in_node)),
-      outIndex: idToIndex.get(Number(edge.out_node)),
-      weight: Number(edge.weight || 0.0),
-      enabled: edge.enabled !== false,
-    })).filter((edge) => Number.isInteger(edge.inIndex) && Number.isInteger(edge.outIndex));
-
-    const enabledConnections = allConnections.filter((edge) => edge.enabled);
-    const incomingEnabled = Array.from({ length: nodes.length }, () => []);
-    for (const edge of enabledConnections) {
-      incomingEnabled[edge.outIndex].push(edge);
-    }
-
-    const { topo, cyclic } = computeTopoOrder(nodeIds, enabledConnections.map((edge) => ({
-      in_node: nodeIds[edge.inIndex],
-      out_node: nodeIds[edge.outIndex],
-    })));
-    const evalOrder = cyclic
-      ? [...hiddenNodeIndices, ...outputNodeIndices]
-      : topo.map((id) => idToIndex.get(id)).filter((idx) => idx !== undefined && nodeTypes[idx] !== "input");
-
-    const layout = computeBrainLayout(nodeTypes, inputNodeIndices, hiddenNodeIndices, outputNodeIndices);
-    const runtime = {
-      nodeTypes,
-      nodeIds,
-      inputNodeIndices,
-      outputNodeIndices,
-      biases,
-      incomingEnabled,
-      evalOrder,
-      cyclic,
-      relaxationIterations: 4,
-      valuesA: new Float64Array(nodes.length),
-      valuesB: new Float64Array(nodes.length),
-      outputBuffer: new Float64Array(outputNodeIndices.length),
-      allConnections,
-      layout,
-    };
-    state.runtimeCache.set(genomeJson, runtime);
-    return runtime;
-  }
-
-  function evaluateRuntime(runtime, inputs) {
-    const valuesA = runtime.valuesA;
-    const valuesB = runtime.valuesB;
-    valuesA.fill(0);
-    for (let i = 0; i < runtime.inputNodeIndices.length; i += 1) {
-      valuesA[runtime.inputNodeIndices[i]] = Number(inputs[i] ?? 0.0);
-    }
-
-    if (!runtime.cyclic) {
-      for (const nodeIndex of runtime.evalOrder) {
-        let weightedSum = runtime.biases[nodeIndex];
-        for (const edge of runtime.incomingEnabled[nodeIndex]) {
-          weightedSum += edge.weight * valuesA[edge.inIndex];
-        }
-        valuesA[nodeIndex] = sigmoid(weightedSum);
-      }
+    if (state.showTrails) {
+      state.birds.forEach((bird, idx) => {
+        state.trailHistory[idx] = state.trailHistory[idx] || [];
+        state.trailHistory[idx].push({ x: Number(bird.x ?? state.birdX), y: bird.y });
+        if (state.trailHistory[idx].length > 120) state.trailHistory[idx].shift();
+      });
     } else {
-      valuesB.set(valuesA);
-      for (let iter = 0; iter < runtime.relaxationIterations; iter += 1) {
-        for (const nodeIndex of runtime.evalOrder) {
-          let weightedSum = runtime.biases[nodeIndex];
-          for (const edge of runtime.incomingEnabled[nodeIndex]) {
-            weightedSum += edge.weight * valuesA[edge.inIndex];
-          }
-          valuesB[nodeIndex] = sigmoid(weightedSum);
-        }
-        for (const inputIdx of runtime.inputNodeIndices) {
-          valuesB[inputIdx] = valuesA[inputIdx];
-        }
-        valuesA.set(valuesB);
-      }
+      state.trailHistory = state.birds.map(() => []);
     }
-
-    for (let i = 0; i < runtime.outputNodeIndices.length; i += 1) {
-      runtime.outputBuffer[i] = valuesA[runtime.outputNodeIndices[i]];
-    }
-    return {
-      outputs: runtime.outputBuffer,
-      activations: valuesA,
-    };
   }
 
-  function computeBrainLayout(nodeTypes, inputNodeIndices, hiddenNodeIndices, outputNodeIndices) {
-    const width = brainCanvas.width;
-    const height = brainCanvas.height;
-    const placeColumn = (indices, x) => {
-      const positions = new Map();
-      if (!indices.length) return positions;
-      const step = height / (indices.length + 1);
-      for (let i = 0; i < indices.length; i += 1) {
-        positions.set(indices[i], { x, y: step * (i + 1) });
-      }
-      return positions;
-    };
-    const byInput = placeColumn(inputNodeIndices, 52);
-    const byHidden = placeColumn(hiddenNodeIndices, width / 2);
-    const byOutput = placeColumn(outputNodeIndices, width - 52);
-    const positions = Array.from({ length: nodeTypes.length }, () => ({ x: width / 2, y: height / 2 }));
-    for (let i = 0; i < positions.length; i += 1) {
-      positions[i] = byInput.get(i) || byHidden.get(i) || byOutput.get(i) || { x: width / 2, y: height / 2 };
-    }
-    return positions;
-  }
-
-  function decideFlap(output, policy, isFlapping, config) {
-    if (policy === "hysteresis" || policy === "deterministic") {
-      if (output >= config.flap_on_threshold) return true;
-      if (output <= config.flap_off_threshold) return false;
-      return isFlapping;
-    }
-    return output >= 0.5;
-  }
-
-  function createPipe(rng, x, config) {
-    const minCenter = config.pipe_min_margin + (config.pipe_gap_size / 2);
-    const maxCenter = config.world_height - config.pipe_min_margin - (config.pipe_gap_size / 2);
-    const gapCenter = minCenter + (maxCenter - minCenter) * rng();
-    return {
-      x,
-      width: config.pipe_width,
-      top: gapCenter - (config.pipe_gap_size / 2),
-      bottom: gapCenter + (config.pipe_gap_size / 2),
-    };
-  }
-
-  function computeBestPipesAllTime(data) {
-    return data.generations.reduce((bestGen, generation) => {
-      const genBest = (generation.genomes || []).reduce((bestGenome, genome) => {
-        return Math.max(bestGenome, Number(genome.pipes_passed_max || 0));
-      }, 0);
-      return Math.max(bestGen, genBest);
-    }, 0);
-  }
-
-  function getChampionPipes(generation) {
-    const champ = (generation.genomes || []).find((entry) => Number(entry.rank) === 1) || generation.genomes?.[0];
-    return Number(champ?.pipes_passed_max || 0);
-  }
-
-  function getGenerationDifficulty(generation) {
-    const config = state.data.metadata.config;
-    return {
-      level: Number(generation.curriculum_level ?? -1),
-      bestEver: Number(generation.curriculum_best_pipes_ever ?? 0),
-      gap: Number(generation.curriculum_gap ?? config.base_pipe_gap ?? config.pipe_gap_size ?? 180),
-      speed: Number(generation.curriculum_pipe_speed ?? config.base_pipe_speed ?? config.pipe_speed ?? 3),
-      spacing: Number(generation.curriculum_pipe_spacing ?? config.base_pipe_spacing ?? config.pipe_spacing ?? 220),
-    };
-  }
-
-  function clearMilestoneBanner() {
-    state.milestoneBannerText = "";
-    state.milestoneBannerExpiresStep = -1;
-    milestoneBanner.textContent = "";
-    milestoneBanner.classList.remove("visible");
-  }
-
-  function maybeShowMilestoneBanner(prevDifficulty, nextDifficulty) {
-    if (!prevDifficulty || !nextDifficulty) return;
-    if (!(nextDifficulty.level > prevDifficulty.level)) return;
-
-    const deltaGap = Number((state.data.metadata.config.base_pipe_gap - nextDifficulty.gap).toFixed(2));
-    const deltaSpeed = Number((nextDifficulty.speed - state.data.metadata.config.base_pipe_speed).toFixed(2));
-    const text = `🏆 Milestone reached: ${nextDifficulty.bestEver} pipes → Gap -${deltaGap}px, Speed +${deltaSpeed.toFixed(2)}`;
-    state.milestoneBannerText = text;
-    state.milestoneBannerExpiresStep = state.step + 120;
-    milestoneBanner.textContent = text;
-    milestoneBanner.classList.add("visible");
-  }
-
-  function advanceGeneration(delta) {
-    if (!state.data) return;
-    const total = state.data.generations.length;
-    const next = (state.generationIndex + delta + total) % total;
-    loadGenerationByIndex(next);
-  }
-
-  function getGenerationNumber(generation, fallbackIndex) {
-    if (!generation) return fallbackIndex;
-    const parsed = Number(generation.generation);
-    return Number.isFinite(parsed) ? parsed : fallbackIndex;
-  }
-
-  function loadGenerationByIndex(generationIdx, options = {}) {
-    const generation = state.data.generations[generationIdx];
-    if (!generation) return;
-    const config = state.data.metadata.config;
-    const previousDifficulty = state.currentDifficulty;
-    const nextDifficulty = getGenerationDifficulty(generation);
-    const seed32 = Number(BigInt(generation.pipe_seed) & BigInt(0xffffffff));
-    const rng = mulberry32(seed32);
-    const generationNumber = getGenerationNumber(generation, generationIdx);
-
-    state.currentGenObj = generation;
-    state.generationIndex = generationIdx;
-    state.currentGenerationNumber = generationNumber;
-    state.maxSteps = Number(config.max_steps) || 5000;
-    state.step = 0;
-    state.generationDone = false;
-    state.bestScore = 0;
-    state.stepAccumulator = 0;
-    state.pipes = [createPipe(rng, config.first_pipe_x, { ...config, pipe_gap_size: nextDifficulty.gap })];
-    state.birds = generation.genomes.map((entry, i) => ({
-      rank: entry.rank,
-      genomeJson: entry.genome_json,
-      y: config.bird_start_y,
-      velocity: 0,
-      flapCooldown: 0,
-      isFlapping: false,
-      alive: true,
-      score: 0,
-      color: `hsla(${Math.round((i * 360) / Math.max(1, generation.genomes.length))}, 85%, 52%, 0.72)`,
-      runtime: getGenomeRuntime(entry.genome_json),
-    }));
-    state.nextPipeIndexPerBird = state.birds.map(() => 0);
-    state.trailHistory = state.birds.map(() => []);
-    state.pipeRngState = rng;
-    state.brainView = {
-      championBird: state.birds.find((bird) => bird.rank === 1) || state.birds[0] || null,
-      inputs: null,
-      outputs: null,
-      activations: null,
-      flapDecision: false,
-    };
-    state.currentRank = state.brainView.championBird ? Number(state.brainView.championBird.rank ?? 1) : null;
-    state.currentDifficulty = nextDifficulty;
-    if (options.clearBanner !== false) {
-      clearMilestoneBanner();
-    }
-    if (options.triggerMilestoneBanner) {
-      maybeShowMilestoneBanner(previousDifficulty, nextDifficulty);
-    }
-    if (generationSlider) generationSlider.value = String(generationIdx);
-    emitUpdateEvent();
-    render();
-  }
-
-  function loadGenerationByNumber(generationNumber, options = {}) {
-    const generationIdx = state.generationNumberToIndex.get(Number(generationNumber));
-    if (!Number.isInteger(generationIdx)) return;
-    loadGenerationByIndex(generationIdx, options);
-  }
-
-  function formatNumber(value) {
-    return Number.isFinite(value) ? value.toFixed(3) : "-";
-  }
-
-  function activationToFill(value, type) {
-    const normalized = type === "input" ? clamp((value + 1) / 2, 0, 1) : clamp(value, 0, 1);
-    const lightness = Math.round(20 + (normalized * 60));
-    return `hsl(195 80% ${lightness}%)`;
-  }
-
-  function drawBrainOverlay() {
-    if (!state.showBrain || !brainCtx || !brainCanvas || !brainInputsEl || !brainOutputEl || !brainDecisionEl || !brainFlapStateEl) return;
-    const { championBird, inputs, outputs, activations } = state.brainView;
-    if (!championBird || !championBird.runtime || !inputs || !outputs || !activations) return;
-    const runtime = championBird.runtime;
-
-    brainInputsEl.innerHTML = INPUT_LABELS.map((label, i) => (
-      `<div>${label}: <b>${formatNumber(inputs[i])}</b></div>`
-    )).join("");
-    const primaryOutput = Number(outputs[0] || 0.0);
-    brainOutputEl.textContent = formatNumber(primaryOutput);
-    brainDecisionEl.textContent = `${state.brainView.flapDecision ? "flap" : "no flap"} (${primaryOutput >= 0.5 ? ">=0.5" : "<0.5"})`;
-    brainFlapStateEl.textContent = `cooldown=${championBird.flapCooldown}, hysteresis=${championBird.isFlapping ? "on" : "off"}`;
-
-    brainCtx.clearRect(0, 0, brainCanvas.width, brainCanvas.height);
-    for (const edge of runtime.allConnections) {
-      const a = runtime.layout[edge.inIndex];
-      const b = runtime.layout[edge.outIndex];
-      brainCtx.beginPath();
-      brainCtx.moveTo(a.x, a.y);
-      brainCtx.lineTo(b.x, b.y);
-      const thickness = 0.6 + (Math.min(Math.abs(edge.weight), 2.5) * 0.9);
-      brainCtx.lineWidth = edge.enabled ? thickness : 1;
-      brainCtx.setLineDash(edge.enabled ? [] : [4, 4]);
-      const alpha = edge.enabled ? 0.42 : 0.18;
-      brainCtx.strokeStyle = edge.weight >= 0
-        ? `rgba(56, 189, 248, ${alpha})`
-        : `rgba(248, 113, 113, ${alpha})`;
-      brainCtx.stroke();
-    }
-    brainCtx.setLineDash([]);
-
-    for (let i = 0; i < runtime.layout.length; i += 1) {
-      const p = runtime.layout[i];
-      const value = activations[i];
-      const type = runtime.nodeTypes[i];
-      brainCtx.beginPath();
-      brainCtx.fillStyle = activationToFill(value, type);
-      brainCtx.strokeStyle = type === "output" ? "#fef08a" : "rgba(203, 213, 225, 0.9)";
-      brainCtx.lineWidth = type === "output" ? 2 : 1;
-      brainCtx.arc(p.x, p.y, 9, 0, Math.PI * 2);
-      brainCtx.fill();
-      brainCtx.stroke();
-    }
+  function loadGeneration(index) {
+    const total = state.data?.generations?.length || 0;
+    if (!total) return;
+    state.generationIndex = clamp(index, 0, total - 1);
+    state.frameIndex = 0;
+    if (els.generationSlider) els.generationSlider.value = String(state.generationIndex);
+    refreshRankSelector();
+    applyFrame(0);
   }
 
   function drawBackground() {
-    const sky = ctx.createLinearGradient(0, 0, 0, canvas.height);
+    const sky = ctx.createLinearGradient(0, 0, 0, state.worldHeight);
     sky.addColorStop(0, "#7bc8ff");
-    sky.addColorStop(0.55, "#8dd8ff");
     sky.addColorStop(1, "#c6f0ff");
     ctx.fillStyle = sky;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    const timeSeconds = state.renderTimeMs / 1000;
-    for (let i = 0; i < state.clouds.length; i += 1) {
-      const cloud = state.clouds[i];
-      const x = (cloud.x + (timeSeconds * cloud.speed)) % (canvas.width + 140) - 70;
-      const y = cloud.y;
-      const radius = 16 * cloud.scale;
-      ctx.fillStyle = `rgba(255,255,255,${cloud.alpha})`;
-      ctx.beginPath();
-      ctx.arc(x, y, radius, 0, Math.PI * 2);
-      ctx.arc(x + radius * 0.85, y - radius * 0.2, radius * 0.8, 0, Math.PI * 2);
-      ctx.arc(x + radius * 1.6, y, radius * 0.95, 0, Math.PI * 2);
-      ctx.fill();
-    }
+    ctx.fillRect(0, 0, state.worldWidth, state.worldHeight);
 
     const groundHeight = 34;
-    const dirt = ctx.createLinearGradient(0, canvas.height - groundHeight, 0, canvas.height);
+    const dirt = ctx.createLinearGradient(0, state.worldHeight - groundHeight, 0, state.worldHeight);
     dirt.addColorStop(0, "#ab7a36");
     dirt.addColorStop(1, "#7f5522");
     ctx.fillStyle = "#79b84f";
-    ctx.fillRect(0, canvas.height - groundHeight - 8, canvas.width, 8);
+    ctx.fillRect(0, state.worldHeight - groundHeight - 8, state.worldWidth, 8);
     ctx.fillStyle = dirt;
-    ctx.fillRect(0, canvas.height - groundHeight, canvas.width, groundHeight);
+    ctx.fillRect(0, state.worldHeight - groundHeight, state.worldWidth, groundHeight);
   }
 
-  function drawPipe(pipe, pipeIndex) {
+  function drawPipe(pipe) {
     const border = 4;
     const capHeight = 12;
     const capOverhang = 6;
@@ -674,7 +309,7 @@
     };
 
     drawSegment(pipe.x, 0, pipe.width, pipe.top);
-    drawSegment(pipe.x, pipe.bottom, pipe.width, canvas.height - pipe.bottom);
+    drawSegment(pipe.x, pipe.bottom, pipe.width, state.worldHeight - pipe.bottom);
 
     ctx.fillStyle = "#2f6f25";
     ctx.fillRect(pipe.x - capOverhang, pipe.top - capHeight, pipe.width + (2 * capOverhang), capHeight);
@@ -682,24 +317,15 @@
     ctx.fillStyle = "#5cbf4c";
     ctx.fillRect(pipe.x - capOverhang + 2, pipe.top - capHeight + 2, pipe.width + (2 * capOverhang) - 4, capHeight - 4);
     ctx.fillRect(pipe.x - capOverhang + 2, pipe.bottom + 2, pipe.width + (2 * capOverhang) - 4, capHeight - 4);
-
-    if (state.showDebug) {
-      ctx.fillStyle = "rgba(0,0,0,0.7)";
-      ctx.font = "12px monospace";
-      ctx.fillText(`#${pipeIndex}`, pipe.x + 4, Math.max(14, pipe.top - 4));
-    }
   }
 
-  function drawBird(bird, birdIndex, config) {
-    const x = config.bird_x;
-    const y = bird.y;
-    const angle = clamp(bird.velocity * 0.11, -0.65, 0.75);
+  function drawBird(bird, birdIndex) {
+    const x = Number.isFinite(Number(bird.x)) ? Number(bird.x) : state.birdX;
     const flapPhase = (state.renderTimeMs / 100) + (birdIndex * 0.25);
-    const wingLift = bird.isFlapping ? Math.sin(flapPhase) * 4 : 0;
-
+    const wingLift = bird.flap ? Math.sin(flapPhase) * 4 : 0;
     ctx.save();
-    ctx.translate(x, y);
-    ctx.rotate(angle);
+    ctx.translate(x, bird.y);
+    ctx.rotate(clamp(bird.velocity * 0.11, -0.65, 0.75));
 
     ctx.shadowColor = "rgba(0,0,0,0.24)";
     ctx.shadowBlur = 6;
@@ -738,242 +364,133 @@
       ctx.arc(0, 0, 13, 0, Math.PI * 2);
       ctx.stroke();
     }
+    if (state.showDebug) {
+      ctx.fillStyle = "#111";
+      ctx.font = "11px monospace";
+      ctx.fillText(`r${bird.rank}: ${bird.pipesPassed}`, 16, -10);
+    }
     ctx.restore();
   }
 
-  function stepSimulation() {
-    if (isReplayMode()) {
-      const selectedGenome = getReplayGenomeByRank(state.selectedRank);
-      const maxFrames = selectedGenome?.frames?.length || 0;
-      const nextFrameIndex = state.replayFrameIndex + 1;
-      if (nextFrameIndex >= maxFrames) {
-        state.generationDone = true;
-        applyReplayFrame(Math.max(0, maxFrames - 1));
-        return;
-      }
-      applyReplayFrame(nextFrameIndex);
-      return;
+  function updateStats() {
+    const generation = getGeneration();
+    const total = state.data?.generations?.length || 0;
+    const genNum = Number(generation?.generation ?? state.generationIndex);
+    const shownCount = state.showManyBirds ? state.birds.length : Math.min(1, state.birds.length);
+    const aliveCount = state.birds.filter((b) => b.alive).length;
+    const bestGen = Math.max(0, ...((generation?.genomes || []).map((g) => Number(g.pipes_passed || 0))));
+    const selected = getGenomeByRank(generation, state.selectedRank);
+    const selFrame = (selected?.frames || [])[Math.min(state.frameIndex, Math.max(0, (selected?.frames || []).length - 1))] || {};
+
+    if (els.statGeneration) els.statGeneration.textContent = `${genNum} (idx ${state.generationIndex}, total ${total})`;
+    if (els.statBirdsShown) els.statBirdsShown.textContent = String(shownCount);
+    if (els.statAlive) els.statAlive.textContent = String(aliveCount);
+    if (els.statBestGen) els.statBestGen.textContent = String(bestGen);
+    if (els.statBestAll) els.statBestAll.textContent = String(Number(selFrame.pipes_passed ?? 0));
+    if (els.statPlayback) els.statPlayback.textContent = state.autoplayEnabled ? "ON (sequential)" : "OFF";
+
+    if (els.generationDebugLine) {
+      const parts = [`genIdx=${state.generationIndex}`, `genNum=${genNum}`, `total=${total}`];
+      if (state.generationTraceWarning) parts.push(state.generationTraceWarning);
+      if (state.missingPipeDataWarning) parts.push("No pipe data; cannot render pipes.");
+      els.generationDebugLine.textContent = parts.join(" | ");
     }
 
-    const config = state.data.metadata.config;
-    const difficulty = state.currentDifficulty || getGenerationDifficulty(state.data.generations[state.generationIndex]);
-    const effectiveConfig = {
-      ...config,
-      pipe_gap_size: difficulty.gap,
-      pipe_speed: difficulty.speed,
-      pipe_spacing: difficulty.spacing,
-    };
-    if (state.generationDone) return;
-
-    if (state.pipes[state.pipes.length - 1].x < effectiveConfig.world_width - effectiveConfig.pipe_spacing) {
-      state.pipes.push(createPipe(state.pipeRngState, effectiveConfig.new_pipe_x, effectiveConfig));
+    if (els.rankingList) {
+      const top = getSortedGenomes(generation).slice(0, 5).map((g) => `#${g.rank}: ${g.pipes_passed}`).join(" | ");
+      els.rankingList.textContent = `Top pipes: ${top}`;
     }
-
-    for (let i = 0; i < state.birds.length; i += 1) {
-      const bird = state.birds[i];
-      if (!bird.alive) continue;
-
-      const inputs = normalizeInputs(bird, state.pipes, effectiveConfig);
-      const { outputs, activations } = evaluateRuntime(bird.runtime, inputs);
-      const output = Number(outputs[0] || 0);
-      const flap = decideFlap(output, state.data.metadata.flap_policy, bird.isFlapping, effectiveConfig);
-      bird.isFlapping = flap;
-
-      if (!state.brainView.championBird || bird.rank === 1 || (state.birds.length === 1 && i === 0)) {
-        state.currentRank = Number(bird.rank ?? state.currentRank ?? 1);
-        state.brainView = {
-          championBird: bird,
-          inputs,
-          outputs,
-          activations,
-          flapDecision: flap,
-        };
-      }
-
-      if (bird.flapCooldown > 0) bird.flapCooldown -= 1;
-      if (flap && bird.flapCooldown === 0) {
-        bird.velocity = effectiveConfig.jump_strength;
-        bird.flapCooldown = effectiveConfig.flap_cooldown_frames;
-      }
-
-      bird.velocity = clamp(bird.velocity + effectiveConfig.gravity, effectiveConfig.velocity_min, effectiveConfig.velocity_max);
-      bird.y += bird.velocity;
-
-      if (bird.y < 0) {
-        bird.y = 0;
-        bird.velocity = 0;
-      }
-      if (bird.y >= effectiveConfig.world_height) {
-        bird.alive = false;
-      }
-
-      for (const pipe of state.pipes) {
-        const withinX = pipe.x <= effectiveConfig.bird_x && effectiveConfig.bird_x <= (pipe.x + pipe.width);
-        if (withinX && !(pipe.top <= bird.y && bird.y <= pipe.bottom)) {
-          bird.alive = false;
-        }
-      }
-
-      while (state.nextPipeIndexPerBird[i] < state.pipes.length) {
-        const pipe = state.pipes[state.nextPipeIndexPerBird[i]];
-        if (effectiveConfig.bird_x <= (pipe.x + pipe.width)) break;
-        bird.score += 1;
-        state.nextPipeIndexPerBird[i] += 1;
-      }
-
-      state.bestScore = Math.max(state.bestScore, bird.score);
-      if (state.showTrails) {
-        const trail = state.trailHistory[i];
-        trail.push({ x: effectiveConfig.bird_x, y: bird.y });
-        if (trail.length > 120) trail.shift();
-      }
-    }
-
-    for (const pipe of state.pipes) {
-      pipe.x -= effectiveConfig.pipe_speed;
-    }
-
-    const countBefore = state.pipes.length;
-    state.pipes = state.pipes.filter((pipe) => (pipe.x + pipe.width) > effectiveConfig.offscreen_pipe_right_threshold);
-    const removed = countBefore - state.pipes.length;
-    if (removed > 0) {
-      state.nextPipeIndexPerBird = state.nextPipeIndexPerBird.map((idx) => Math.max(0, idx - removed));
-    }
-
-    state.step += 1;
-    if (state.milestoneBannerText && state.step >= state.milestoneBannerExpiresStep) {
-      clearMilestoneBanner();
-    }
-    const aliveCount = state.birds.filter((bird) => bird.alive).length;
-    state.generationDone = aliveCount === 0 || state.step >= state.maxSteps;
   }
 
-  function updateStats(generation) {
-    if (isReplayMode()) {
-      const generation = getSelectedReplayGeneration();
-      const selectedGenome = getReplayGenomeByRank(state.selectedRank);
-      const maxFrames = selectedGenome?.frames?.length || 0;
-      statGeneration.textContent = `Replay gen ${generation?.generation ?? "-"}`;
-      statBirdsShown.textContent = String(state.birds.length);
-      statAlive.textContent = `Step ${state.replayFrameIndex + 1} / ${maxFrames}`;
-      statBestGen.textContent = String(state.replayScore);
-      statBestAll.textContent = String(selectedGenome?.pipes_passed ?? state.replayScore);
-      statPlayback.textContent = state.playing ? "ON" : "PAUSED";
-      statSeed.textContent = String(selectedGenome?.meta?.seed_info?.pipe_rng_seed ?? "-");
-      statCurriculumLevel.textContent = "-";
-      statCurriculumBestEver.textContent = "-";
-      statCurriculumGap.textContent = "-";
-      statCurriculumSpeed.textContent = "-";
-      statCurriculumSpacing.textContent = "-";
-      return;
+  function drawScoreOverlay() {
+    const generation = getGeneration();
+    const selected = getGenomeByRank(generation, state.selectedRank);
+    const selFrame = (selected?.frames || [])[Math.min(state.frameIndex, Math.max(0, (selected?.frames || []).length - 1))] || {};
+    const score = Number(selFrame.pipes_passed ?? 0);
+    ctx.fillStyle = "rgba(15,23,42,0.55)";
+    ctx.fillRect(10, 10, 110, 38);
+    ctx.fillStyle = "#f8fafc";
+    ctx.font = "bold 22px sans-serif";
+    ctx.fillText(String(score), 20, 37);
+  }
+
+  function drawBrain() {
+    if (!state.showBrain || !els.brainPanel) return;
+    const generation = getGeneration();
+    const champ = getGenomeByRank(generation, 1);
+    const frame = (champ?.frames || [])[Math.min(state.frameIndex, Math.max(0, (champ?.frames || []).length - 1))] || {};
+    const outVal = frame.out;
+
+    if (els.brainInputs) els.brainInputs.textContent = "Recorded frame data only";
+    if (outVal === undefined || outVal === null) {
+      if (els.brainOutput) els.brainOutput.textContent = "(not recorded)";
+      if (els.brainDecision) els.brainDecision.textContent = "(not recorded)";
+    } else {
+      const num = Number(outVal);
+      if (els.brainOutput) els.brainOutput.textContent = Number.isFinite(num) ? num.toFixed(3) : String(outVal);
+      if (els.brainDecision) els.brainDecision.textContent = num >= 0.5 ? "flap (>=0.5)" : "no flap (<0.5)";
     }
-
-    const total = state.data.generations.length;
-    const visibleBirds = state.showChampionOnly ? Math.min(state.birds.length, 1) : state.birds.length;
-    const alive = state.birds.filter((bird) => bird.alive).length;
-    statGeneration.textContent = `${state.currentGenerationNumber} (idx ${state.generationIndex}, total ${total})`;
-    statBirdsShown.textContent = String(visibleBirds);
-    statAlive.textContent = `${alive} / ${state.birds.length}`;
-    statBestGen.textContent = String(getChampionPipes(generation));
-    statBestAll.textContent = String(state.bestPipesAllTime);
-    statPlayback.textContent = state.autoplayEnabled ? "ON (sequential)" : "OFF";
-    statSeed.textContent = String(generation.pipe_seed);
-    const difficulty = state.currentDifficulty || getGenerationDifficulty(generation);
-    statCurriculumLevel.textContent = difficulty.level >= 0 ? String(difficulty.level) : "-";
-    statCurriculumBestEver.textContent = String(difficulty.bestEver);
-    statCurriculumGap.textContent = Number.isFinite(difficulty.gap) ? difficulty.gap.toFixed(1) : "-";
-    statCurriculumSpeed.textContent = Number.isFinite(difficulty.speed) ? difficulty.speed.toFixed(2) : "-";
-    statCurriculumSpacing.textContent = Number.isFinite(difficulty.spacing) ? difficulty.spacing.toFixed(1) : "-";
-
-    const highlightedRank = state.currentRank ?? "-";
-    const highlightedGenome = generation.genomes.find((entry) => Number(entry.rank) === Number(highlightedRank)) || generation.genomes[0] || null;
-    generationDebugLine.textContent = [
-      `genIdx=${state.generationIndex}`,
-      `genNum=${state.currentGenerationNumber}`,
-      `rank=${highlightedRank}`,
-      `fit=${highlightedGenome ? Number(highlightedGenome.fitness ?? 0).toFixed(3) : "-"}`,
-      `pipes(max/mean)=${highlightedGenome ? `${Number(highlightedGenome.pipes_passed_max ?? 0)}/${Number(highlightedGenome.pipes_passed_mean ?? 0).toFixed(3)}` : "-/-"}`,
-      `seed=${generation.pipe_seed ?? "-"}`,
-    ].join(" | ");
+    if (els.brainFlapState) els.brainFlapState.textContent = frame.flap ? "on" : "off";
+    if (brainCtx && els.brainCanvas) {
+      brainCtx.clearRect(0, 0, els.brainCanvas.width, els.brainCanvas.height);
+      brainCtx.fillStyle = "#94a3b8";
+      brainCtx.font = "14px monospace";
+      brainCtx.fillText("Brain graph unavailable in replay-only mode", 12, 30);
+    }
   }
 
   function render() {
-    const generation = state.currentGenObj;
-    if (!generation) return;
-    const config = state.data.metadata.config;
-
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    if (!state.data) return;
+    ctx.save();
+    const sx = canvas.width / Math.max(1, state.worldWidth);
+    const sy = canvas.height / Math.max(1, state.worldHeight);
+    ctx.scale(sx, sy);
     drawBackground();
-    for (let i = 0; i < state.pipes.length; i += 1) {
-      drawPipe(state.pipes[i], i);
-    }
-
-    const championBird = state.birds.find((bird) => bird.rank === 1) || state.birds[0];
-    for (let i = 0; i < state.birds.length; i += 1) {
-      const bird = state.birds[i];
-      if (state.showChampionOnly && bird !== championBird) continue;
-      if (!bird.alive && !state.showTrails) continue;
-
-      if (state.showTrails) {
+    state.pipes.forEach(drawPipe);
+    state.birds.forEach((bird, i) => {
+      if (!bird.alive && !state.showTrails) return;
+      const trail = state.trailHistory[i] || [];
+      if (state.showTrails && trail.length > 1) {
         ctx.strokeStyle = bird.color;
-        ctx.lineWidth = bird.rank === 1 ? 2.2 : 1;
         ctx.beginPath();
-        const points = state.trailHistory[i];
-        for (let j = 0; j < points.length; j += 1) {
-          const p = points[j];
-          if (j === 0) ctx.moveTo(p.x, p.y);
-          else ctx.lineTo(p.x, p.y);
-        }
+        trail.forEach((p, idx) => (idx ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
         ctx.stroke();
       }
-
-      drawBird(bird, i, config);
-
-      if (state.showDebug) {
-        ctx.fillStyle = "#111";
-        ctx.font = "11px monospace";
-        ctx.fillText(`r${bird.rank}: ${bird.score}`, config.bird_x + 16, bird.y - 10);
-      }
-    }
-
-    updateStats(generation);
-
-    const topFive = [...state.birds]
-      .sort((a, b) => (a.rank - b.rank))
-      .slice(0, 5)
-      .map((bird) => `#${bird.rank}: ${bird.score}${bird.alive ? "" : " ✖"}`)
-      .join(" | ");
-    if (rankingList) rankingList.textContent = `Top scores: ${topFive}`;
-    if (state.milestoneBannerText) {
-      milestoneBanner.textContent = state.milestoneBannerText;
-      milestoneBanner.classList.add("visible");
-    }
-    drawBrainOverlay();
+      drawBird(bird, i);
+    });
+    drawScoreOverlay();
+    ctx.restore();
+    updateStats();
+    drawBrain();
   }
 
-  function animate(timestamp) {
-    if (!state.lastTimestamp) state.lastTimestamp = timestamp;
-    const deltaMs = timestamp - state.lastTimestamp;
-    state.lastTimestamp = timestamp;
+  function stepReplay() {
+    const generation = getGeneration();
+    if (!generation) return;
+    const maxFrames = getLongestFrameCount(generation);
+    const next = state.frameIndex + 1;
+    if (next >= maxFrames) {
+      if (state.playing && state.autoplayEnabled && state.generationIndex < (state.data.generations.length - 1)) {
+        loadGeneration(state.generationIndex + 1);
+      } else {
+        applyFrame(Math.max(0, maxFrames - 1));
+      }
+      return;
+    }
+    applyFrame(next);
+  }
+
+  function animate(ts) {
+    if (!state.lastTimestamp) state.lastTimestamp = ts;
+    const deltaMs = ts - state.lastTimestamp;
+    state.lastTimestamp = ts;
     state.renderTimeMs += deltaMs;
 
-    if (state.data) {
-      if (state.playing) {
-        state.stepAccumulator += ((deltaMs / 1000) * 60) * state.simSpeedMultiplier;
-        while (state.stepAccumulator >= 1) {
-          state.stepAccumulator -= 1;
-          stepSimulation();
-        }
-      }
-
-      if (!isReplayMode() && state.playing && state.autoplayEnabled && state.generationDone) {
-        const atLastGeneration = state.generationIndex >= state.data.generations.length - 1;
-        if (atLastGeneration) {
-          state.autoplayEnabled = false;
-          if (autoplayToggle) autoplayToggle.checked = false;
-        } else {
-          loadGenerationByIndex(state.generationIndex + 1, { triggerMilestoneBanner: true, clearBanner: false });
-        }
+    if (state.data && state.playing) {
+      state.stepAccumulator += ((deltaMs / 1000) * 60) * state.simSpeedMultiplier;
+      while (state.stepAccumulator >= 1) {
+        state.stepAccumulator -= 1;
+        stepReplay();
       }
     }
 
@@ -982,228 +499,80 @@
   }
 
   function attachControls() {
-    playPauseBtn?.addEventListener("click", () => {
+    els.playPauseBtn?.addEventListener("click", () => {
       state.playing = !state.playing;
-      playPauseBtn.textContent = state.playing ? "Pause sim" : "Play sim";
+      els.playPauseBtn.textContent = state.playing ? "Pause sim" : "Play sim";
     });
-
-    autoplayToggle?.addEventListener("change", (event) => {
-      state.autoplayEnabled = Boolean(event.target.checked);
+    els.prevGenBtn?.addEventListener("click", () => loadGeneration(state.generationIndex - 1));
+    els.nextGenBtn?.addEventListener("click", () => loadGeneration(state.generationIndex + 1));
+    els.autoplayToggle?.addEventListener("change", (e) => { state.autoplayEnabled = Boolean(e.target.checked); });
+    els.generationSlider?.addEventListener("input", (e) => loadGeneration(Number(e.target.value) || 0));
+    els.speedSlider?.addEventListener("input", (e) => { state.simSpeedMultiplier = clamp((Number(e.target.value) || 1500) / 1000, 0.5, 3); });
+    els.trailToggle?.addEventListener("change", (e) => { state.showTrails = Boolean(e.target.checked); });
+    els.debugToggle?.addEventListener("change", (e) => { state.showDebug = Boolean(e.target.checked); });
+    els.showBrainToggle?.addEventListener("change", (e) => {
+      state.showBrain = Boolean(e.target.checked);
+      if (els.brainPanel) els.brainPanel.hidden = !state.showBrain;
     });
-
-    prevGenBtn?.addEventListener("click", () => {
-      if (isReplayMode()) return;
-      loadGenerationByIndex((state.generationIndex - 1 + state.data.generations.length) % state.data.generations.length, { clearBanner: true });
+    els.showManyBirdsToggle?.addEventListener("change", (e) => {
+      state.showManyBirds = Boolean(e.target.checked);
+      state.trailHistory = [];
+      applyFrame(state.frameIndex);
     });
-    nextGenBtn?.addEventListener("click", () => {
-      if (isReplayMode()) return;
-      loadGenerationByIndex((state.generationIndex + 1) % state.data.generations.length, { clearBanner: true });
-    });
-
-    generationSlider?.addEventListener("input", (event) => {
-      if (isReplayMode()) {
-        state.generationIndex = Number(event.target.value) || 0;
-        state.replayFrameIndex = 0;
-        state.generationDone = false;
-        refreshRankSelector();
-        applyReplayFrame(0);
-        return;
-      }
-      if (!state.data) return;
-      loadGenerationByIndex(Number(event.target.value) || 0, { clearBanner: true });
-    });
-
-    speedSlider?.addEventListener("input", (event) => {
-      state.simSpeedMultiplier = clamp((Number(event.target.value) || 1500) / 1000, 0.5, 3);
-    });
-
-    trailToggle?.addEventListener("change", (event) => {
-      state.showTrails = Boolean(event.target.checked);
-      if (!state.showTrails) {
-        state.trailHistory = state.trailHistory.map(() => []);
-      }
-    });
-
-    championOnlyToggle?.addEventListener("change", (event) => {
-      state.showChampionOnly = Boolean(event.target.checked);
-    });
-
-    debugToggle?.addEventListener("change", (event) => {
-      state.showDebug = Boolean(event.target.checked);
-    });
-
-    showBrainToggle?.addEventListener("change", (event) => {
-      state.showBrain = Boolean(event.target.checked);
-      if (brainPanel) brainPanel.hidden = !state.showBrain;
-    });
-
-    rankSelector?.addEventListener("change", (event) => {
-      if (!isReplayMode()) return;
-      state.selectedRank = Number(event.target.value || 1);
-      applyReplayFrame(state.replayFrameIndex);
-    });
-
-    showManyBirdsToggle?.addEventListener("change", (event) => {
-      state.showManyBirds = Boolean(event.target.checked);
-      if (isReplayMode()) applyReplayFrame(state.replayFrameIndex);
+    els.rankSelector?.addEventListener("change", (e) => {
+      state.selectedRank = Number(e.target.value || 1);
+      applyFrame(state.frameIndex);
     });
   }
 
-  async function fetchJson(path) {
-    let response;
+  async function fetchReplay() {
+    const path = `./training_replay.json?v=${Date.now()}`;
+    const attemptedUrl = new URL(path, window.location.href).href;
     try {
-      response = await fetch(path, { cache: "no-store" });
+      const response = await fetch(path, { cache: "no-store" });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status} ${response.statusText}\nURL: ${attemptedUrl}`);
+      }
+      const data = await response.json();
+      const normalized = normalizeReplayData(data);
+      if (!Array.isArray(normalized.generations) || normalized.generations.length === 0) {
+        throw new Error("training_replay.json loaded but has 0 generations.");
+      }
+      return normalized;
     } catch (error) {
-      const networkError = new Error(`Network error while loading ${path}: ${error.message}`);
-      networkError.kind = "network";
-      throw networkError;
-    }
-
-    if (!response.ok) {
-      const httpError = new Error(`HTTP ${response.status}`);
-      httpError.kind = "http";
-      httpError.status = response.status;
-      throw httpError;
-    }
-
-    try {
-      return await response.json();
-    } catch (error) {
-      const parseError = new Error(`Invalid JSON in ${path}: ${error.message}`);
-      parseError.kind = "parse";
-      throw parseError;
+      const command = "python main.py --record-training-replay --replay-top-k 30 --replay-episode 0";
+      setStatus("Failed to load training replay.");
+      setError([
+        String(error.message || error),
+        `URL: ${attemptedUrl}`,
+        "How to generate:",
+        command,
+        "Expected file at: web/training_replay.json",
+      ].join("\n"));
+      throw error;
     }
   }
 
-  async function loadEvolution() {
+  async function init() {
+    attachControls();
     try {
-      const data = await fetchJson("evolution.json");
-      if (!Array.isArray(data.generations) || data.generations.length === 0) {
-        throw new Error("No generations in evolution.json");
-      }
-      state.mode = "evolution";
+      const data = await fetchReplay();
       state.data = data;
-      state.generationNumberToIndex = new Map();
-      state.availableGenerationNumbers = [];
-      for (let i = 0; i < data.generations.length; i += 1) {
-        const generationNumber = getGenerationNumber(data.generations[i], i);
-        state.availableGenerationNumbers.push(generationNumber);
-        state.generationNumberToIndex.set(generationNumber, i);
+      state.worldWidth = Number(data?.config?.world_width || canvas.width);
+      state.worldHeight = Number(data?.config?.world_height || canvas.height);
+      state.birdX = Number(data?.config?.bird_x || 80);
+      if (els.generationSlider) {
+        els.generationSlider.min = "0";
+        els.generationSlider.max = String(Math.max(0, data.generations.length - 1));
       }
-      state.bestPipesAllTime = computeBestPipesAllTime(data);
-      if (generationSlider) {
-        generationSlider.min = "0";
-        generationSlider.max = String(data.generations.length - 1);
-      }
-      setErrorMessage("");
-      setModeLabel("Evolution mode");
-      setStatus(`Loaded ${data.generations.length} generations from evolution.json.`);
-      state.simSpeedMultiplier = clamp((Number(speedSlider?.value) || 1500) / 1000, 0.5, 3);
-      if (state.generationNumberToIndex.has(0)) {
-        loadGenerationByNumber(0, { clearBanner: true });
-      } else {
-        loadGenerationByIndex(0, { clearBanner: true });
-      }
-    } catch (error) {
-      console.error("Failed loading evolution.json", {
-        kind: error.kind || "unknown",
-        status: error.status,
-        message: error.message,
-      });
-      throw error;
+      setError("");
+      setStatus(`Loaded ${data.generations.length} generations from training_replay.json.`);
+      loadGeneration(0);
+      requestAnimationFrame(animate);
+    } catch {
+      // error is already surfaced above
     }
   }
 
-  async function loadReplay() {
-    try {
-      const data = await fetchJson("training_replay.json");
-      if (!Array.isArray(data.generations) || data.generations.length === 0) {
-        throw new Error("No generations in training_replay.json");
-      }
-
-      state.mode = "replay";
-      state.replayData = data;
-      state.replayGenerations = data.generations;
-      state.generationIndex = 0;
-      state.stepAccumulator = 0;
-      state.generationDone = false;
-      state.simSpeedMultiplier = clamp((Number(speedSlider?.value) || 1500) / 1000, 0.5, 3);
-      state.selectedRank = 1;
-      setErrorMessage("");
-      setModeLabel("Replay mode");
-      setStatus(`Loaded ${data.generations.length} replay generations from training_replay.json.`);
-      if (generationSlider) {
-        generationSlider.min = "0";
-        generationSlider.max = String(data.generations.length - 1);
-        generationSlider.value = "0";
-      }
-      refreshRankSelector();
-      applyReplayFrame(0);
-      emitUpdateEvent();
-    } catch (error) {
-      console.error("Failed loading training_replay.json", {
-        kind: error.kind || "unknown",
-        status: error.status,
-        message: error.message,
-      });
-      throw error;
-    }
-  }
-
-  async function initializeDataLoad() {
-    const modeParam = new URLSearchParams(window.location.search).get("mode");
-    const forcedMode = modeParam === "evolution" || modeParam === "replay" ? modeParam : null;
-
-    try {
-      if (forcedMode === "evolution") {
-        await loadEvolution();
-      } else if (forcedMode === "replay") {
-        await loadReplay();
-      } else {
-        try {
-          await loadReplay();
-        } catch (replayError) {
-          const canFallback = (replayError.kind === "network")
-            || (replayError.kind === "http" && Number(replayError.status) === 404);
-          if (!canFallback) throw replayError;
-          await loadEvolution();
-        }
-      }
-      configureControlsForMode();
-    } catch (error) {
-      setModeLabel("");
-      setStatus("No web data found.");
-      setErrorMessage("No web data found. Run: python main.py --export-web-evolution … OR python main.py --record-replay");
-      state.currentGenObj = null;
-      state.data = null;
-      configureControlsForMode();
-    }
-  }
-
-
-  async function loadMode(mode) {
-    if (mode === "replay") {
-      await loadReplay();
-    } else {
-      await loadEvolution();
-    }
-    configureControlsForMode();
-  }
-
-  function getSnapshot() {
-    return {
-      mode: state.mode,
-      generationIndex: state.generationIndex,
-      currentGeneration: getCurrentGeneration(),
-    };
-  }
-
-  window.FlappyViewer = {
-    loadMode,
-    getSnapshot,
-  };
-
-  attachControls();
-  initializeDataLoad();
-  requestAnimationFrame(animate);
+  init();
 })();
