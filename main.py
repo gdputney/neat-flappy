@@ -183,22 +183,6 @@ def count_passed_pipes(
         next_pipe_index += 1
     return pipes_passed, next_pipe_index
 
-def normalized_gap_center_distance(bird: Bird, pipes: list[Pipe], world_height: float) -> float:
-    """Return normalized abs distance from bird y to the next pipe ahead gap center."""
-    if not pipes:
-        return 0.0
-
-    ahead_pipes = [pipe for pipe in pipes if (pipe.x + pipe.width) >= bird.x]
-    if not ahead_pipes:
-        return 0.0
-
-    next_pipe = min(ahead_pipes, key=lambda pipe: pipe.x)
-    gap_center = (next_pipe.top + next_pipe.bottom) / 2.0
-    distance = abs(bird.y - gap_center)
-    height = world_height if world_height > 0 else 1.0
-    return min(distance / height, 1.0)
-
-
 def proximity_weight(dx_to_next_pipe: float, ramp_distance: float) -> float:
     """Scale shaping from 0 (far) to 1 (at/inside next pipe)."""
     if ramp_distance <= 0:
@@ -206,12 +190,6 @@ def proximity_weight(dx_to_next_pipe: float, ramp_distance: float) -> float:
     if dx_to_next_pipe <= 0:
         return 1.0
     return max(0.0, min(1.0, 1.0 - (dx_to_next_pipe / ramp_distance)))
-
-
-def bounded_gap_shaping(abs_gap_error: float) -> float:
-    """Return clipped quadratic shaping value bounded to [0, 1]."""
-    clipped_error = max(0.0, min(1.0, abs_gap_error))
-    return clipped_error * clipped_error
 
 
 def clamp(value: float, low: float, high: float) -> float:
