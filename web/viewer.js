@@ -20,12 +20,9 @@
     trailToggle: document.getElementById("trailToggle"),
     debugToggle: document.getElementById("debugToggle"),
     showBrainToggle: document.getElementById("showBrainToggle"),
-    showManyBirdsToggle: document.getElementById("showManyBirdsToggle"),
     status: document.getElementById("status"),
     modeBadge: document.getElementById("modeBadge"),
     errorMessage: document.getElementById("errorMessage"),
-    rankingList: document.getElementById("rankingList"),
-    rankSelector: document.getElementById("rankSelector"),
     generationDebugLine: document.getElementById("generationDebugLine"),
     brainPanel: document.getElementById("brainPanel"),
     brainInputs: document.getElementById("brainInputs"),
@@ -46,7 +43,6 @@
     replay: null,
     generations: [],
     traces: [],
-    tracesFromGenomes: false,
     generationMessage: "",
     generationIndex: 0,
     playT: 0,
@@ -56,8 +52,6 @@
     showTrails: false,
     showDebug: false,
     showBrain: false,
-    showManyBirds: true,
-    selectedRank: 1,
     stepAccumulator: 0,
     lastTimestamp: 0,
     birds: [],
@@ -76,10 +70,6 @@
     vignetteGradient: null,
     groundGradient: null,
     clouds: [],
-  };
-
-  const STORAGE_KEYS = {
-    showManyBirds: "showManyBirds",
   };
 
   const setStatus = (text) => { if (els.status) els.status.textContent = text; };
@@ -123,28 +113,20 @@
     const generations = Array.isArray(raw?.generations) ? raw.generations : [];
     return {
       ...raw,
-      generations: generations.map((gen, idx) => normalizeGeneration(gen, idx)),
-    };
-  }
-
-  function normalizeGeneration(generation, idx) {
-    const genomes = Array.isArray(generation?.genomes)
-      ? generation.genomes
-      : (Array.isArray(generation?.birds)
-        ? generation.birds
-        : []);
-
-    return {
-      ...generation,
-      generation: generation?.generation ?? idx,
-      traces: Array.isArray(generation?.traces) ? generation.traces : [],
-      genomes: genomes.map((g, gIdx) => ({
-        ...g,
-        rank: Number(g?.rank ?? (gIdx + 1)),
-        frames: Array.isArray(g?.frames)
-          ? g.frames
-          : (Array.isArray(g?.trace) ? g.trace : []),
-      })),
+      generations: generations.map((gen, idx) => {
+        const genomes = Array.isArray(gen?.genomes) ? gen.genomes : [];
+        return {
+          ...gen,
+          generation: Number(gen?.generation ?? idx),
+          best_pipes_passed: Number(gen?.best_pipes_passed ?? 0),
+          genomes: genomes.map((g, gIdx) => ({
+            ...g,
+            rank: Number(g?.rank ?? (gIdx + 1)),
+            pipes_passed: Number(g?.pipes_passed ?? 0),
+            frames: Array.isArray(g?.frames) ? g.frames : [],
+          })),
+        };
+      }),
     };
   }
 
@@ -153,21 +135,6 @@
   }
 
   function buildTraces(generation) {
-    const oldTraces = Array.isArray(generation?.traces) ? generation.traces : [];
-    if (oldTraces.length > 0) {
-      state.tracesFromGenomes = false;
-      return oldTraces.map((trace, idx) => ({
-        rank: Number(trace?.rank ?? (idx + 1)),
-        fitness: Number(trace?.fitness ?? 0),
-        pipes_passed: Number(trace?.pipes_passed ?? 0),
-        steps: Number(trace?.steps ?? 0),
-        frames: Array.isArray(trace?.frames)
-          ? trace.frames
-          : (Array.isArray(trace?.trace) ? trace.trace : []),
-      })).sort((a, b) => Number(a.rank || 999) - Number(b.rank || 999));
-    }
-
-    state.tracesFromGenomes = true;
     const genomes = Array.isArray(generation?.genomes) ? generation.genomes : [];
     return genomes.map((genome, idx) => ({
       rank: Number(genome?.rank ?? (idx + 1)),
@@ -178,9 +145,7 @@
     })).sort((a, b) => Number(a.rank || 999) - Number(b.rank || 999));
   }
 
-  function getTraceByRank(rank) {
-    return state.traces.find((t) => Number(t.rank) === Number(rank)) || state.traces[0] || null;
-  }
+  function getTraceByRank(rank) { return state.traces.find((t) => Number(t.rank) === Number(rank)) || state.traces[0] || null; }
 
   function getLongestFrameCount() {
     return Math.max(0, ...state.traces.map((t) => (t.frames || []).length));
@@ -231,22 +196,6 @@
     return alive;
   }
 
-  function refreshRankSelector() {
-    if (!els.rankSelector) return;
-    els.rankSelector.innerHTML = "";
-    for (const trace of state.traces) {
-      const option = document.createElement("option");
-      option.value = String(trace.rank);
-      option.textContent = `Rank ${trace.rank}`;
-      els.rankSelector.appendChild(option);
-    }
-    const desired = String(state.selectedRank || 1);
-    els.rankSelector.value = [...els.rankSelector.options].some((o) => o.value === desired)
-      ? desired
-      : (els.rankSelector.options[0]?.value || "1");
-    state.selectedRank = Number(els.rankSelector.value || 1);
-  }
-
   function applyFrame(playT) {
     const generation = getGeneration();
     if (!generation) return;
@@ -254,11 +203,11 @@
     const cfg = state.replay?.config || {};
     const worldHeight = Number(cfg.world_height || state.logicalHeight);
     const worldWidth = Number(cfg.world_width || state.logicalWidth);
-    const shown = state.showManyBirds ? state.traces : [getTraceByRank(state.selectedRank)].filter(Boolean);
+    const shown = state.traces;
 
     const generationLabel = Number(generation?.generation ?? state.generationIndex);
     if (state.traces.length === 0) {
-      state.generationMessage = `No frames/traces found in generation ${generationLabel}. Expected generations[g].genomes[].frames[]`;
+      state.generationMessage = `No frames found in generation ${generationLabel}. Expected generations[g].genomes[].frames[]`;
     } else {
       state.generationMessage = "";
     }
@@ -313,7 +262,6 @@
     state.traces = buildTraces(getGeneration());
     buildPipeTimeline();
     if (els.generationSlider) els.generationSlider.value = String(state.generationIndex);
-    refreshRankSelector();
     applyFrame(0);
   }
 
@@ -404,7 +352,7 @@
     ctx.strokeRect(pipe.x - 2, pipe.bottom, pipe.width + 4, lipHeight);
   }
 
-  function drawBird(bird, birdIndex, config) {
+  function drawBird(bird) {
     const angle = clamp(bird.velocity * 0.11, -0.65, 0.75);
     const wingLift = bird.flap ? Math.sin((state.playT + bird.rank * 1.7) * 0.5) * 2.3 : -1.2;
     ctx.save();
@@ -416,10 +364,9 @@
     ctx.shadowOffsetY = 2;
 
     ctx.beginPath();
-    ctx.moveTo(14, 0);
-    ctx.quadraticCurveTo(1, -7.8, -10, -7);
-    ctx.quadraticCurveTo(-12, 0, -10, 7);
-    ctx.quadraticCurveTo(1, 7.8, 14, 0);
+    ctx.moveTo(13, 0);
+    ctx.lineTo(-9, -8);
+    ctx.lineTo(-11, 7);
     ctx.closePath();
     ctx.fillStyle = bird.color;
     ctx.fill();
@@ -427,11 +374,19 @@
     ctx.lineWidth = 1.5;
     ctx.stroke();
 
+    ctx.fillStyle = "#f59e0b";
+    ctx.beginPath();
+    ctx.moveTo(13, 0);
+    ctx.lineTo(17, -1.5);
+    ctx.lineTo(17, 1.5);
+    ctx.closePath();
+    ctx.fill();
+
     ctx.fillStyle = "rgba(255,255,255,0.24)";
     ctx.beginPath();
-    ctx.moveTo(-2.5, -4.5);
-    ctx.lineTo(7.8, -1);
-    ctx.lineTo(-2.5, 1.3);
+    ctx.moveTo(-2.8, -4.8);
+    ctx.lineTo(6.2, -1.2);
+    ctx.lineTo(-2.8, 1);
     ctx.closePath();
     ctx.fill();
 
@@ -473,16 +428,14 @@
     const generation = getGeneration();
     const total = state.generations.length;
     const genNum = Number(generation?.generation ?? state.generationIndex);
-    const birdsShown = state.birds.length;
-    const aliveCount = state.birds.filter((b) => b.alive).length;
-    const bestGen = Math.max(0, ...(state.traces.map((trace) => {
-      const endFrame = (trace.frames || [])[Math.max(0, (trace.frames || []).length - 1)] || {};
-      return Number(endFrame.pipes_passed ?? trace.pipes_passed ?? 0);
-    })));
+    const birdsShown = state.renderEntries.length;
+    const aliveCount = state.aliveCountAll;
     const champion = getTraceByRank(1);
+    const championEndFrame = (champion?.frames || [])[Math.max(0, (champion?.frames || []).length - 1)] || {};
+    const bestGen = Number(championEndFrame.pipes_passed ?? generation?.best_pipes_passed ?? champion?.pipes_passed ?? 0);
     const championFrame = (champion?.frames || [])[Math.min(state.playT, Math.max(0, (champion?.frames || []).length - 1))] || {};
 
-    if (els.statGeneration) els.statGeneration.textContent = `${genNum} (idx ${state.generationIndex}, total ${total})`;
+    if (els.statGeneration) els.statGeneration.textContent = String(genNum);
     if (els.statBirdsShown) els.statBirdsShown.textContent = String(birdsShown);
     if (els.statAlive) els.statAlive.textContent = String(aliveCount);
     if (els.statBestGen) els.statBestGen.textContent = String(bestGen);
@@ -500,20 +453,11 @@
           `pipeFramesLen=${state.pipeFramesLen}`,
           `championFramesLen=${state.championFramesLen}`,
           `tracesMaxLen=${state.tracesMaxLen}`,
-          `mapping=${state.tracesFromGenomes ? "genomes->traces" : "native-traces"}`,
+          "mapping=genomes[].frames[]",
         ].join(" | ");
       } else {
         els.generationDebugLine.textContent = `genIdx=${state.generationIndex} | genNum=${genNum} | total=${total}`;
       }
-    }
-
-    if (els.rankingList) {
-      const top = state.traces.slice(0, 5).map((trace) => {
-        const endFrame = (trace.frames || [])[Math.max(0, (trace.frames || []).length - 1)] || {};
-        const pipesPassed = Number(endFrame.pipes_passed ?? trace.pipes_passed ?? 0);
-        return `#${trace.rank}: ${pipesPassed}`;
-      }).join(" | ");
-      els.rankingList.textContent = `Top pipes: ${top}`;
     }
   }
 
@@ -555,7 +499,7 @@
         ctx.stroke();
       }
     });
-    state.birds.forEach((bird, birdIndex) => drawBird(bird, birdIndex, state.replay?.config || {}));
+    state.birds.forEach((bird) => drawBird(bird));
 
     if (state.generationMessage) {
       ctx.fillStyle = "rgba(17,24,39,0.84)";
@@ -577,18 +521,18 @@
       if (state.playing && state.autoplayEnabled && state.generationIndex < (state.generations.length - 1)) {
         loadGeneration(state.generationIndex + 1);
       } else {
-        const lastPipeT = Math.max(0, state.pipeFramesLen - 1);
-        applyFrame(lastPipeT);
+        const lastFrameT = Math.max(0, state.tracesMaxLen - 1);
+        applyFrame(lastFrameT);
       }
     };
 
-    if (state.playT >= state.pipeFramesLen || state.aliveCountAll <= 0) {
+    if (state.playT >= state.tracesMaxLen - 1) {
       finishGeneration();
       return;
     }
 
     applyFrame(state.playT + 1);
-    if (state.playT >= state.pipeFramesLen || state.aliveCountAll <= 0) {
+    if (state.playT >= state.tracesMaxLen - 1) {
       finishGeneration();
     }
   }
@@ -626,16 +570,6 @@
       state.showBrain = Boolean(e.target.checked);
       if (els.brainPanel) els.brainPanel.hidden = !state.showBrain;
     });
-    els.showManyBirdsToggle?.addEventListener("change", (e) => {
-      state.showManyBirds = Boolean(e.target.checked);
-      window.localStorage.setItem(STORAGE_KEYS.showManyBirds, state.showManyBirds ? "1" : "0");
-      state.trailHistory = [];
-      applyFrame(state.playT);
-    });
-    els.rankSelector?.addEventListener("change", (e) => {
-      state.selectedRank = Number(e.target.value || 1);
-      applyFrame(state.playT);
-    });
   }
 
   async function fetchReplay() {
@@ -651,9 +585,13 @@
       if (!Array.isArray(normalized.generations) || normalized.generations.length === 0) {
         throw new Error("training_replay.json loaded but has 0 generations.");
       }
+      const invalidGeneration = normalized.generations.find((generation) => !Array.isArray(generation.genomes));
+      if (invalidGeneration) {
+        throw new Error("Invalid schema: expected generations[].genomes[].frames[].");
+      }
       return normalized;
     } catch (error) {
-      const command = "python main.py --record-training-replay --replay-top-k 30 --replay-episode 0";
+      const command = "python main.py --record-training-replay --replay-top-k 30";
       setStatus("Failed to load training replay.");
       setError([
         String(error.message || error),
@@ -668,9 +606,6 @@
 
   async function init() {
     attachControls();
-    const showManyBirdsSaved = window.localStorage.getItem(STORAGE_KEYS.showManyBirds);
-    state.showManyBirds = showManyBirdsSaved === null ? true : showManyBirdsSaved === "1";
-    if (els.showManyBirdsToggle) els.showManyBirdsToggle.checked = state.showManyBirds;
     sizeCanvas();
     window.addEventListener("resize", sizeCanvas);
 
