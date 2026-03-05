@@ -80,6 +80,13 @@ class SimulationConfig:
     mutation_add_node_prob: float = 0.18
     debug_no_flap: bool = False
     debug_always_flap: bool = False
+    json_compact: bool = True
+
+
+def json_dump_kwargs(config: SimulationConfig) -> dict[str, Any]:
+    if config.json_compact:
+        return {"separators": (",", ":")}
+    return {"indent": 2}
 
 
 def decide_flap(
@@ -1052,7 +1059,7 @@ def build_position_history_from_generations(generations: list[dict[str, Any]]) -
     return position_history
 
 
-def write_stats(simulation_data: dict[str, Any], run_dir: Path, save_csv: bool) -> None:
+def write_stats(simulation_data: dict[str, Any], run_dir: Path, save_csv: bool, config: SimulationConfig) -> None:
     generation_stats = [
         {
             "generation": generation["generation"],
@@ -1092,8 +1099,9 @@ def write_stats(simulation_data: dict[str, Any], run_dir: Path, save_csv: bool) 
     }
 
     stats_path = run_dir / "stats.json"
+    json_kwargs = json_dump_kwargs(config)
     with stats_path.open("w", encoding="utf-8") as file:
-        json.dump(stats, file, indent=2)
+        json.dump(stats, file, **json_kwargs)
 
     if save_csv:
         csv_path = run_dir / "fitness.csv"
@@ -1108,7 +1116,7 @@ def write_stats(simulation_data: dict[str, Any], run_dir: Path, save_csv: bool) 
             writer.writerows(generation_stats)
 
 
-def write_best_genome(simulation_data: dict[str, Any], run_dir: Path) -> Path | None:
+def write_best_genome(simulation_data: dict[str, Any], run_dir: Path, config: SimulationConfig) -> Path | None:
     best_genome = simulation_data.get("best_genome", {}).get("genome")
     if best_genome is None:
         return None
@@ -1118,8 +1126,9 @@ def write_best_genome(simulation_data: dict[str, Any], run_dir: Path) -> Path | 
         "best_genome": simulation_data["best_genome"],
     }
     best_genome_path = run_dir / "best_genome.json"
+    json_kwargs = json_dump_kwargs(config)
     with best_genome_path.open("w", encoding="utf-8") as file:
-        json.dump(payload, file, indent=2)
+        json.dump(payload, file, **json_kwargs)
 
     return best_genome_path
 
@@ -1180,6 +1189,7 @@ def write_record_replay(
     replay_result: dict[str, Any],
     generation_metadata: dict[str, Any],
     output_path: Path,
+    config: SimulationConfig,
     dt: float = 1.0 / 60.0,
 ) -> Path:
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1215,18 +1225,20 @@ def write_record_replay(
         "frames": frames,
     }
 
+    json_kwargs = json_dump_kwargs(config)
     with output_path.open("w", encoding="utf-8") as file:
-        json.dump(data, file, indent=2)
+        json.dump(data, file, **json_kwargs)
     return output_path
 
 
 
 
-def write_json_atomic(output_path: Path, payload: dict[str, Any]) -> Path:
+def write_json_atomic(output_path: Path, payload: dict[str, Any], config: SimulationConfig) -> Path:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     temp_path = output_path.with_suffix(output_path.suffix + ".tmp")
+    json_kwargs = json_dump_kwargs(config)
     with temp_path.open("w", encoding="utf-8") as file:
-        json.dump(payload, file, indent=2)
+        json.dump(payload, file, **json_kwargs)
     temp_path.replace(output_path)
     return output_path
 
@@ -1254,7 +1266,7 @@ def write_training_replay(
         },
         "generations": replay_generations,
     }
-    return write_json_atomic(output_path, payload)
+    return write_json_atomic(output_path, payload, config)
 
 
 def get_git_commit() -> str | None:
@@ -1358,8 +1370,9 @@ def write_web_evolution(
             }
         )
 
+    json_kwargs = json_dump_kwargs(config)
     with output_path.open("w", encoding="utf-8") as file:
-        json.dump(payload, file, indent=2)
+        json.dump(payload, file, **json_kwargs)
     return output_path
 
 
@@ -1416,6 +1429,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--record-training-replay", action="store_true")
     parser.add_argument("--replay-top-k", type=int, default=20)
     parser.add_argument("--replay-max-steps", type=int, default=None)
+    parser.add_argument(
+        "--json-pretty",
+        action="store_true",
+        help="Write pretty-indented JSON instead of compact output",
+    )
     parser.add_argument(
         "--flap-policy",
         choices=["probabilistic", "hysteresis", "deterministic"],
@@ -1520,17 +1538,20 @@ def main() -> None:
         mutation_add_node_prob=clamp(args.mutation_add_node_prob, 0.0, 1.0),
         debug_no_flap=args.debug_no_flap,
         debug_always_flap=args.debug_always_flap,
+        json_compact=not args.json_pretty,
     )
+
+    json_kwargs = json_dump_kwargs(config)
 
     if args.replay is not None:
         replay_data, generation_metadata = replay_from_genome(args.replay, config)
         replay_path = Path(__file__).resolve().parent / "replay.json"
         with replay_path.open("w", encoding="utf-8") as file:
-            json.dump(replay_data, file, indent=2)
+            json.dump(replay_data, file, **json_kwargs)
         print(f"Saved replay output: {replay_path}")
         if args.record_replay:
             web_path = Path(__file__).resolve().parent / "web" / "simulation.json"
-            out_path = write_record_replay(replay_data["result"], generation_metadata, web_path)
+            out_path = write_record_replay(replay_data["result"], generation_metadata, web_path, config)
             print(f"Saved record replay output: {out_path}")
         return
 
@@ -1547,21 +1568,21 @@ def main() -> None:
 
     output_path = Path(__file__).resolve().parent / "simulation.json"
     with output_path.open("w", encoding="utf-8") as file:
-        json.dump(simulation_data, file, indent=2)
+        json.dump(simulation_data, file, **json_kwargs)
 
     runs_dir = Path(__file__).resolve().parent / "runs"
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     run_dir = runs_dir / f"run_{timestamp}"
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    write_stats(simulation_data, run_dir, save_csv=args.csv)
-    best_genome_path = write_best_genome(simulation_data, run_dir)
+    write_stats(simulation_data, run_dir, save_csv=args.csv, config=config)
+    best_genome_path = write_best_genome(simulation_data, run_dir, config=config)
     plot_path = write_plot(simulation_data, run_dir) if args.plot else None
 
     if args.record_replay and best_genome_path is not None:
         replay_data, generation_metadata = replay_from_genome(best_genome_path, config)
         web_path = Path(__file__).resolve().parent / "web" / "simulation.json"
-        out_path = write_record_replay(replay_data["result"], generation_metadata, web_path)
+        out_path = write_record_replay(replay_data["result"], generation_metadata, web_path, config)
         print(f"Saved record replay output: {out_path}")
 
     if args.export_web_evolution:
