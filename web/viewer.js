@@ -53,11 +53,6 @@
     birds: [],
     pipes: [],
     trailHistory: [],
-    missingPipeDataWarning: false,
-    generationTraceWarning: "",
-    worldWidth: 500,
-    worldHeight: 800,
-    birdX: 80,
   };
 
   const setStatus = (text) => { if (els.status) els.status.textContent = text; };
@@ -65,110 +60,6 @@
   if (els.modeBadge) els.modeBadge.textContent = "TRAINING REPLAY";
 
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
-
-  const candidateGenerationKeys = ["generations", "gens", "data"];
-  const candidateTraceKeys = ["traces", "birds", "top_k", "genomes"];
-  const candidateFramesKeys = ["frames", "steps", "trajectory"];
-
-  function normalizeFrame(frame, index, fallbackX = null) {
-    if (!frame || typeof frame !== "object") {
-      return {
-        t: index,
-        x: fallbackX,
-        y: null,
-        vy: 0,
-        alive: true,
-        flap: false,
-        pipes_passed: 0,
-        out: null,
-        pipes: [],
-      };
-    }
-    const normalizedPipes = Array.isArray(frame.pipes)
-      ? frame.pipes.map((pipe) => {
-        if (!pipe || typeof pipe !== "object") return null;
-        const width = Number(pipe.width ?? 70);
-        const hasGapCompact = Number.isFinite(Number(pipe.gap_y)) && Number.isFinite(Number(pipe.gap_h));
-        if (hasGapCompact) {
-          return {
-            x: Number(pipe.x ?? 0),
-            width,
-            gap_y: Number(pipe.gap_y),
-            gap_h: Number(pipe.gap_h),
-          };
-        }
-        if (Number.isFinite(Number(pipe.top)) && Number.isFinite(Number(pipe.bottom))) {
-          return {
-            x: Number(pipe.x ?? 0),
-            width,
-            gap_y: (Number(pipe.top) + Number(pipe.bottom)) / 2,
-            gap_h: Number(pipe.bottom) - Number(pipe.top),
-          };
-        }
-        return null;
-      }).filter(Boolean)
-      : [];
-
-    return {
-      t: Number(frame.t ?? frame.step ?? index),
-      x: Number.isFinite(Number(frame.x)) ? Number(frame.x) : fallbackX,
-      y: Number.isFinite(Number(frame.y)) ? Number(frame.y) : null,
-      vy: Number(frame.vy ?? frame.velocity ?? 0),
-      alive: Boolean(frame.alive ?? 1),
-      flap: Boolean(frame.flap ?? 0),
-      pipes_passed: Number(frame.pipes_passed ?? frame.score ?? 0),
-      out: frame.out ?? frame.output ?? null,
-      pipes: normalizedPipes,
-    };
-  }
-
-  function normalizeTrace(trace, index) {
-    if (!trace || typeof trace !== "object") return null;
-    const framesSource = candidateFramesKeys.map((key) => trace[key]).find((value) => Array.isArray(value)) || [];
-    const rank = Number(trace.rank ?? trace.k ?? index + 1);
-    const fitness = Number(trace.fitness ?? trace.score ?? 0);
-    const fallbackX = Number.isFinite(Number(trace.x)) ? Number(trace.x) : null;
-    const frames = framesSource.map((frame, frameIndex) => normalizeFrame(frame, frameIndex, fallbackX));
-    return {
-      rank: Number.isFinite(rank) ? rank : index + 1,
-      fitness: Number.isFinite(fitness) ? fitness : 0,
-      pipes_passed: Number(trace.pipes_passed ?? (frames.length ? frames[frames.length - 1].pipes_passed : 0)),
-      frames,
-    };
-  }
-
-  function normalizeGeneration(generation, index) {
-    const generationObj = generation && typeof generation === "object" ? generation : {};
-    const tracesSource = candidateTraceKeys
-      .map((key) => generationObj[key])
-      .find((value) => Array.isArray(value)) || [];
-    const traces = tracesSource.map((trace, traceIndex) => normalizeTrace(trace, traceIndex)).filter(Boolean);
-    const generationNumber = Number(generationObj.generation ?? generationObj.gen ?? generationObj.id ?? index);
-    return {
-      ...generationObj,
-      generation: Number.isFinite(generationNumber) ? generationNumber : index,
-      genomes: traces,
-    };
-  }
-
-  function normalizeReplayData(rawData) {
-    const generationsSource = candidateGenerationKeys
-      .map((key) => rawData?.[key])
-      .find((value) => Array.isArray(value)) || [];
-    const normalizedGenerations = generationsSource.map((generation, index) => normalizeGeneration(generation, index));
-    const normalized = {
-      ...rawData,
-      generations: normalizedGenerations,
-      config: {
-        ...(rawData?.config || {}),
-      },
-    };
-
-    console.log("[training-replay] resolved generations length:", normalizedGenerations.length);
-    console.log("[training-replay] first generation keys:", Object.keys(normalizedGenerations[0] || {}));
-    console.log("[training-replay] extracted traces in gen0:", (normalizedGenerations[0]?.genomes || []).length);
-    return normalized;
-  }
 
   function getGeneration() {
     return state.data?.generations?.[state.generationIndex] || null;
@@ -209,20 +100,7 @@
     if (!generation) return;
     const cfg = state.data?.config || {};
     const worldHeight = Number(cfg.world_height || canvas.height);
-
-    const traces = getSortedGenomes(generation);
-    if (traces.length === 0) {
-      const keys = Object.keys(generation || {});
-      state.generationTraceWarning = `No bird traces found in generation object. Available keys: ${keys.join(", ")}`;
-      console.error("No bird traces found in generation object", generation);
-      state.birds = [];
-      state.pipes = [];
-      state.missingPipeDataWarning = true;
-      return;
-    }
-    state.generationTraceWarning = "";
-
-    const shown = state.showManyBirds ? traces : [getGenomeByRank(generation, state.selectedRank)].filter(Boolean);
+    const shown = state.showManyBirds ? getSortedGenomes(generation) : [getGenomeByRank(generation, state.selectedRank)].filter(Boolean);
 
     state.frameIndex = frameIndex;
     state.birds = shown.map((genome, idx) => {
@@ -230,10 +108,9 @@
       const frame = frames[Math.min(frameIndex, Math.max(0, frames.length - 1))] || {};
       return {
         rank: Number(genome.rank || 1),
-        x: Number.isFinite(Number(frame.x)) ? Number(frame.x) : state.birdX,
         y: clamp(Number(frame.y ?? worldHeight / 2), 0, worldHeight),
         velocity: Number(frame.vy ?? 0),
-        alive: Boolean(frame.alive ?? 1),
+        alive: Boolean(frame.alive ?? 0),
         flap: Boolean(frame.flap ?? 0),
         out: frame.out,
         pipesPassed: Number(frame.pipes_passed ?? 0),
@@ -242,15 +119,11 @@
     });
 
     const selected = getGenomeByRank(generation, state.selectedRank);
-    const selectedFrames = selected?.frames || [];
-    const selectedFrame = selectedFrames[Math.min(frameIndex, Math.max(0, selectedFrames.length - 1))] || {};
-    const framePipes = Array.isArray(selectedFrame.pipes) ? selectedFrame.pipes : [];
-    state.missingPipeDataWarning = framePipes.length === 0;
-    state.pipes = framePipes.map((pipe) => {
+    state.pipes = (selected?.pipes || []).map((pipe) => {
       const halfGap = Number(pipe.gap_h || 0) / 2;
       return {
         x: Number(pipe.x),
-        width: Number(pipe.width || cfg.pipe_width || 70),
+        width: Number(cfg.pipe_width || 70),
         top: Number(pipe.gap_y) - halfGap,
         bottom: Number(pipe.gap_y) + halfGap,
       };
@@ -259,7 +132,7 @@
     if (state.showTrails) {
       state.birds.forEach((bird, idx) => {
         state.trailHistory[idx] = state.trailHistory[idx] || [];
-        state.trailHistory[idx].push({ x: Number(bird.x ?? state.birdX), y: bird.y });
+        state.trailHistory[idx].push({ x: Number(cfg.bird_x || 80), y: bird.y });
         if (state.trailHistory[idx].length > 120) state.trailHistory[idx].shift();
       });
     } else {
@@ -282,81 +155,24 @@
     sky.addColorStop(0, "#7bc8ff");
     sky.addColorStop(1, "#c6f0ff");
     ctx.fillStyle = sky;
-    ctx.fillRect(0, 0, state.worldWidth, state.worldHeight);
-
-    const groundHeight = 34;
-    const dirt = ctx.createLinearGradient(0, state.worldHeight - groundHeight, 0, state.worldHeight);
-    dirt.addColorStop(0, "#ab7a36");
-    dirt.addColorStop(1, "#7f5522");
-    ctx.fillStyle = "#79b84f";
-    ctx.fillRect(0, state.worldHeight - groundHeight - 8, state.worldWidth, 8);
-    ctx.fillStyle = dirt;
-    ctx.fillRect(0, state.worldHeight - groundHeight, state.worldWidth, groundHeight);
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
   }
 
   function drawPipe(pipe) {
-    const border = 4;
-    const capHeight = 12;
-    const capOverhang = 6;
-
-    const drawSegment = (x, y, width, height) => {
-      ctx.fillStyle = "#2f6f25";
-      ctx.fillRect(x, y, width, height);
-      ctx.fillStyle = "#4ea53f";
-      ctx.fillRect(x + border, y + border, Math.max(0, width - (2 * border)), Math.max(0, height - (2 * border)));
-      ctx.fillStyle = "rgba(255,255,255,0.10)";
-      ctx.fillRect(x + border + 2, y + border, 4, Math.max(0, height - (2 * border)));
-    };
-
-    drawSegment(pipe.x, 0, pipe.width, pipe.top);
-    drawSegment(pipe.x, pipe.bottom, pipe.width, state.worldHeight - pipe.bottom);
-
     ctx.fillStyle = "#2f6f25";
-    ctx.fillRect(pipe.x - capOverhang, pipe.top - capHeight, pipe.width + (2 * capOverhang), capHeight);
-    ctx.fillRect(pipe.x - capOverhang, pipe.bottom, pipe.width + (2 * capOverhang), capHeight);
-    ctx.fillStyle = "#5cbf4c";
-    ctx.fillRect(pipe.x - capOverhang + 2, pipe.top - capHeight + 2, pipe.width + (2 * capOverhang) - 4, capHeight - 4);
-    ctx.fillRect(pipe.x - capOverhang + 2, pipe.bottom + 2, pipe.width + (2 * capOverhang) - 4, capHeight - 4);
+    ctx.fillRect(pipe.x, 0, pipe.width, pipe.top);
+    ctx.fillRect(pipe.x, pipe.bottom, pipe.width, canvas.height - pipe.bottom);
   }
 
   function drawBird(bird, birdIndex) {
-    const x = Number.isFinite(Number(bird.x)) ? Number(bird.x) : state.birdX;
-    const flapPhase = (state.renderTimeMs / 100) + (birdIndex * 0.25);
-    const wingLift = bird.flap ? Math.sin(flapPhase) * 4 : 0;
+    const x = Number(state.data?.config?.bird_x || 80);
     ctx.save();
     ctx.translate(x, bird.y);
     ctx.rotate(clamp(bird.velocity * 0.11, -0.65, 0.75));
-
-    ctx.shadowColor = "rgba(0,0,0,0.24)";
-    ctx.shadowBlur = 6;
-    ctx.shadowOffsetY = 2;
-
     ctx.fillStyle = bird.color;
     ctx.beginPath();
-    ctx.moveTo(12, 0);
-    ctx.quadraticCurveTo(5, -8, -8, -6);
-    ctx.quadraticCurveTo(-12, 0, -8, 6);
-    ctx.quadraticCurveTo(5, 8, 12, 0);
-    ctx.closePath();
+    ctx.arc(0, 0, 11, 0, Math.PI * 2);
     ctx.fill();
-
-    ctx.shadowBlur = 0;
-    ctx.strokeStyle = "rgba(0,0,0,0.3)";
-    ctx.lineWidth = 1.2;
-    ctx.stroke();
-
-    ctx.strokeStyle = "rgba(255,255,255,0.55)";
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(-2, -1);
-    ctx.lineTo(-9, -5 - wingLift);
-    ctx.stroke();
-
-    ctx.fillStyle = "#fff";
-    ctx.beginPath();
-    ctx.arc(5, -2, 1.8, 0, Math.PI * 2);
-    ctx.fill();
-
     if (bird.rank === 1) {
       ctx.strokeStyle = "#ffd54f";
       ctx.lineWidth = 2;
@@ -390,28 +206,13 @@
     if (els.statPlayback) els.statPlayback.textContent = state.autoplayEnabled ? "ON (sequential)" : "OFF";
 
     if (els.generationDebugLine) {
-      const parts = [`genIdx=${state.generationIndex}`, `genNum=${genNum}`, `total=${total}`];
-      if (state.generationTraceWarning) parts.push(state.generationTraceWarning);
-      if (state.missingPipeDataWarning) parts.push("No pipe data; cannot render pipes.");
-      els.generationDebugLine.textContent = parts.join(" | ");
+      els.generationDebugLine.textContent = `genIdx=${state.generationIndex} | genNum=${genNum} | total=${total}`;
     }
 
     if (els.rankingList) {
       const top = getSortedGenomes(generation).slice(0, 5).map((g) => `#${g.rank}: ${g.pipes_passed}`).join(" | ");
       els.rankingList.textContent = `Top pipes: ${top}`;
     }
-  }
-
-  function drawScoreOverlay() {
-    const generation = getGeneration();
-    const selected = getGenomeByRank(generation, state.selectedRank);
-    const selFrame = (selected?.frames || [])[Math.min(state.frameIndex, Math.max(0, (selected?.frames || []).length - 1))] || {};
-    const score = Number(selFrame.pipes_passed ?? 0);
-    ctx.fillStyle = "rgba(15,23,42,0.55)";
-    ctx.fillRect(10, 10, 110, 38);
-    ctx.fillStyle = "#f8fafc";
-    ctx.font = "bold 22px sans-serif";
-    ctx.fillText(String(score), 20, 37);
   }
 
   function drawBrain() {
@@ -441,10 +242,6 @@
 
   function render() {
     if (!state.data) return;
-    ctx.save();
-    const sx = canvas.width / Math.max(1, state.worldWidth);
-    const sy = canvas.height / Math.max(1, state.worldHeight);
-    ctx.scale(sx, sy);
     drawBackground();
     state.pipes.forEach(drawPipe);
     state.birds.forEach((bird, i) => {
@@ -458,8 +255,6 @@
       }
       drawBird(bird, i);
     });
-    drawScoreOverlay();
-    ctx.restore();
     updateStats();
     drawBrain();
   }
@@ -534,11 +329,10 @@
         throw new Error(`HTTP ${response.status} ${response.statusText}\nURL: ${attemptedUrl}`);
       }
       const data = await response.json();
-      const normalized = normalizeReplayData(data);
-      if (!Array.isArray(normalized.generations) || normalized.generations.length === 0) {
+      if (!Array.isArray(data.generations) || data.generations.length === 0) {
         throw new Error("training_replay.json loaded but has 0 generations.");
       }
-      return normalized;
+      return data;
     } catch (error) {
       const command = "python main.py --record-training-replay --replay-top-k 30 --replay-episode 0";
       setStatus("Failed to load training replay.");
@@ -558,9 +352,6 @@
     try {
       const data = await fetchReplay();
       state.data = data;
-      state.worldWidth = Number(data?.config?.world_width || canvas.width);
-      state.worldHeight = Number(data?.config?.world_height || canvas.height);
-      state.birdX = Number(data?.config?.bird_x || 80);
       if (els.generationSlider) {
         els.generationSlider.min = "0";
         els.generationSlider.max = String(Math.max(0, data.generations.length - 1));
@@ -570,7 +361,7 @@
       loadGeneration(0);
       requestAnimationFrame(animate);
     } catch {
-      // error is already surfaced above
+      // Error state rendered in hero message.
     }
   }
 
