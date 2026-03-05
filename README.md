@@ -40,6 +40,7 @@ Useful options:
 - `--plot` to save `fitness_over_generations.png` in the run folder (requires `matplotlib`).
 - `--replay runs/run_<timestamp>/best_genome.json` to replay a single bird with a saved best genome.
 - `--record-training-replay` to write `web/training_replay.json` for the web viewer.
+- `--json-pretty` to write human-readable indented JSON (compact JSON is the default for faster/smaller output).
 
 Example:
 
@@ -50,6 +51,9 @@ python main.py --seed 7 --csv --plot --deterministic-pipes --flap-policy determi
 Per run, the script now writes:
 
 - `simulation.json` in the repository root (full simulation data).
+
+For long training runs, keep the default compact JSON mode to reduce file size and speed up disk writes. Use `--json-pretty` when you want human-readable indentation.
+
 - `runs/run_<timestamp>/stats.json` with best/mean/median fitness per generation.
 - `runs/run_<timestamp>/fitness.csv` if `--csv` is used.
 - `runs/run_<timestamp>/fitness_over_generations.png` if `--plot` is used.
