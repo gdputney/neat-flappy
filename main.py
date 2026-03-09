@@ -43,6 +43,7 @@ class SimulationConfig:
     population_size: int = 100
     generations: int = 10
     max_steps: int = 5000
+    max_pipes: int | None = None
     world_width: float = 500.0
     world_height: float = 800.0
     pipe_spacing: float = 220.0
@@ -326,6 +327,7 @@ def simulate_genome(
     replay_frames: list[dict[str, Any]] = []
     replay_pipes: list[dict[str, float]] = []
     trace_cap = max(0, trace_max_steps) if trace_max_steps is not None else config.max_steps
+    max_pipes_cap = config.max_pipes
 
     def record_pipe(pipe: Pipe) -> None:
         replay_pipes.append(
@@ -339,7 +341,7 @@ def simulate_genome(
     if record_trace:
         record_pipe(first_pipe)
 
-    while alive and steps < config.max_steps:
+    while alive and steps < config.max_steps and (max_pipes_cap is None or pipes_passed < max_pipes_cap):
         if pipes[-1].x < config.world_width - effective_pipe_spacing:
             spawned_pipe = Pipe(
                 x=config.world_width + 50.0,
@@ -481,7 +483,10 @@ def simulate_genome(
         steps += 1
 
     if death_reason is None:
-        death_reason = "max_steps"
+        if max_pipes_cap is not None and pipes_passed >= max_pipes_cap:
+            death_reason = "max_pipes"
+        else:
+            death_reason = "max_steps"
         death_bird_y = bird.y
         death_bird_velocity = bird.velocity
 
@@ -1207,6 +1212,7 @@ def write_web_evolution(
             "flap_policy": config.flap_policy,
             "config": {
                 "max_steps": config.max_steps,
+                "max_pipes": config.max_pipes,
                 "world_width": config.world_width,
                 "world_height": config.world_height,
                 "flap_cooldown_frames": config.flap_cooldown_frames,
@@ -1309,6 +1315,12 @@ def parse_args() -> argparse.Namespace:
         default=SimulationConfig.max_steps,
         help="Maximum simulation steps per episode",
     )
+    parser.add_argument(
+        "--max-pipes",
+        type=int,
+        default=SimulationConfig.max_pipes,
+        help="Maximum pipes passed per episode",
+    )
     parser.add_argument("--plot", action="store_true", help="Save a fitness-over-generations PNG")
     parser.add_argument("--csv", action="store_true", help="Also save fitness.csv")
     parser.add_argument(
@@ -1406,6 +1418,7 @@ def main() -> None:
         seed=args.seed,
         generations=max(1, args.generations),
         max_steps=max(1, args.max_steps),
+        max_pipes=max(1, args.max_pipes) if args.max_pipes is not None else None,
         flap_policy=args.flap_policy,
         flap_cooldown_frames=max(0, args.flap_cooldown_frames),
         flap_on_threshold=args.flap_on_threshold,
