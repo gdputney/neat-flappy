@@ -16,8 +16,8 @@ class Bird:
         gravity: Gravity acceleration applied each update (pixels/tick^2).
         jump_strength: Velocity set when jump() is called (negative goes up).
         max_fall_speed: Clamp for downward velocity.
-        world_width: Width used to normalize horizontal distances.
-        world_height: Height used to normalize vertical values.
+        world_width: Width used to normalise horizontal distances.
+        world_height: Height used to normalise vertical values.
     """
 
     y: float = 250.0

@@ -89,16 +89,16 @@ Outputs are written to:
 - `runs/run_<timestamp>/fitness.csv` (if `--csv`)
 - `runs/run_<timestamp>/fitness_over_generations.png` (if `--plot`)
 
-## Input normalization + shaping knobs
+## Input normalisation + shaping knobs
 
-The network inputs are now explicitly normalized through `normalize_inputs(...)` in `main.py` so every feature remains in bounded ranges (mostly `[-1, 1]`, with forward distance in `[0, 1]`). This keeps activation scales stable and helps structural mutations stay useful across generations.
+The network inputs are now explicitly normalised through `normalise_inputs(...)` in `main.py` so every feature remains in bounded ranges (mostly `[-1, 1]`, with forward distance in `[0, 1]`). This keeps activation scales stable and helps structural mutations stay useful across generations.
 
 Shaping is also now positive and active *before* the first passed pipe, with two configurable components:
 
-- Centering reward (`--centering-reward-scale`, disable with `--disable-centering-reward`):
+- Centring reward (`--centering-reward-scale`, disable with `--disable-centering-reward`):
   - `k_center * (1 - |gap_error_norm|)` (clamped via `--abs-gap-error-clamp`)
 - Progress reward (`--progress-reward-scale`, disable with `--disable-progress-reward`):
-  - reward for improving normalized gap alignment from one step to the next
+  - reward for improving normalised gap alignment from one step to the next
   - per-step delta is clamped by `--progress-reward-clamp` to prevent jitter exploitation
 
 Mutation structure growth is tuned with:

@@ -28,7 +28,7 @@ from main import (
     simulate_genome,
     clamp,
     proximity_weight,
-    normalize_inputs,
+    normalise_inputs,
     compute_curriculum_params,
     frames_to_position_history,
 )
@@ -428,7 +428,7 @@ class CliParsingTests(unittest.TestCase):
 class ShapingSignalTests(unittest.TestCase):
     @staticmethod
     def expected_shaping_reward_total(result: dict, config: SimulationConfig) -> float:
-        """Reconstruct shaping from frames to validate simulate_genome reward behavior."""
+        """Reconstruct shaping from frames to validate simulate_genome reward behaviour."""
         shaping_reward_total = 0.0
         previous_abs_gap_error_norm = None
 
@@ -449,21 +449,21 @@ class ShapingSignalTests(unittest.TestCase):
             dx_to_next_pipe = next_pipe["x"] - bird_x
             proximity = proximity_weight(dx_to_next_pipe=dx_to_next_pipe, ramp_distance=config.pipe_spacing)
             clamped_abs_gap_error = clamp(abs_gap_error, 0.0, config.abs_gap_error_clamp)
-            normalized_abs_gap_error = clamp(
+            normalised_abs_gap_error = clamp(
                 clamped_abs_gap_error / max(config.abs_gap_error_clamp, 1e-6),
                 0.0,
                 1.0,
             )
 
             if config.enable_centering_reward:
-                shaping_reward_total += config.centering_reward_scale * (1.0 - normalized_abs_gap_error) * proximity
+                shaping_reward_total += config.centering_reward_scale * (1.0 - normalised_abs_gap_error) * proximity
 
             if config.enable_progress_reward and previous_abs_gap_error_norm is not None:
-                progress = previous_abs_gap_error_norm - normalized_abs_gap_error
+                progress = previous_abs_gap_error_norm - normalised_abs_gap_error
                 progress = clamp(progress, -config.progress_reward_clamp, config.progress_reward_clamp)
                 shaping_reward_total += config.progress_reward_scale * progress * proximity
 
-            previous_abs_gap_error_norm = normalized_abs_gap_error
+            previous_abs_gap_error_norm = normalised_abs_gap_error
         return shaping_reward_total
 
     def test_reported_shaping_reward_matches_frame_reconstruction(self) -> None:
@@ -486,15 +486,15 @@ class ShapingSignalTests(unittest.TestCase):
 
 
 
-class InputNormalizationTests(unittest.TestCase):
-    def test_normalize_inputs_scales_values_to_unit_ranges(self) -> None:
+class InputNormalisationTests(unittest.TestCase):
+    def test_normalise_inputs_scales_values_to_unit_ranges(self) -> None:
         config = SimulationConfig(world_width=500.0, world_height=800.0, velocity_min=-12.0, velocity_max=12.0)
         bird = Bird(y=260.0, velocity=-6.0, x=100.0, world_width=500.0, world_height=800.0)
         pipe = Pipe(x=220.0, world_height=800.0)
         pipe.top = 200.0
         pipe.bottom = 360.0
 
-        inputs = normalize_inputs(bird, [pipe], config)
+        inputs = normalise_inputs(bird, [pipe], config)
 
         self.assertEqual(len(inputs), 6)
         self.assertTrue(all(-1.0 <= value <= 1.0 for value in inputs[:2] + inputs[3:]))

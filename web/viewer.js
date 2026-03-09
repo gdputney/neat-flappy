@@ -93,10 +93,10 @@
     state.skyGradient = null;
     state.vignetteGradient = null;
     state.groundGradient = null;
-    initializeClouds();
+    initialiseClouds();
   }
 
-  function initializeClouds() {
+  function initialiseClouds() {
     const cloudCount = Math.max(3, Math.min(7, Math.round(state.logicalWidth / 140)));
     state.clouds = new Array(cloudCount);
     for (let i = 0; i < cloudCount; i += 1) {
@@ -112,7 +112,7 @@
     }
   }
 
-  function normalizeReplayData(raw) {
+  function normaliseReplayData(raw) {
     const generations = Array.isArray(raw?.generations) ? raw.generations : [];
     return {
       ...raw,
@@ -165,7 +165,7 @@
     const filePath = summary?.file;
     if (!filePath) return summary || null;
 
-    const generation = normalizeReplayData({ generations: [await fetchJsonWithDiagnostics(`./${filePath}?v=${Date.now()}`)] }).generations[0];
+    const generation = normaliseReplayData({ generations: [await fetchJsonWithDiagnostics(`./${filePath}?v=${Date.now()}`)] }).generations[0];
     state.generationCache[index] = generation;
     return generation;
   }
@@ -636,16 +636,16 @@
     const attemptedUrl = new URL(path, window.location.href).href;
     try {
       const data = await fetchJsonWithDiagnostics(path);
-      const normalized = normalizeReplayData(data);
-      if (!Array.isArray(normalized.generations) || normalized.generations.length === 0) {
+      const normalised = normaliseReplayData(data);
+      if (!Array.isArray(normalised.generations) || normalised.generations.length === 0) {
         throw new Error("training_replay.json loaded but has 0 generations.");
       }
-      const hasShards = Array.isArray(normalized.generation_files) && normalized.generation_files.length > 0;
-      const invalidGeneration = normalized.generations.find((generation) => !Array.isArray(generation.genomes) && !generation.file);
+      const hasShards = Array.isArray(normalised.generation_files) && normalised.generation_files.length > 0;
+      const invalidGeneration = normalised.generations.find((generation) => !Array.isArray(generation.genomes) && !generation.file);
       if (!hasShards && invalidGeneration) {
         throw new Error("Invalid schema: expected generations[].genomes[].frames[].");
       }
-      return normalized;
+      return normalised;
     } catch (error) {
       const command = "python main.py --record-training-replay --replay-top-k 30";
       setStatus("Failed to load training replay.");
@@ -680,7 +680,7 @@
       await loadGeneration(0);
       requestAnimationFrame(animate);
     } catch (error) {
-      setStatus("Failed to initialize training replay.");
+      setStatus("Failed to initialise training replay.");
       setError(String(error?.message || error));
     }
   }

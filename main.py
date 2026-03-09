@@ -228,16 +228,16 @@ def compute_curriculum_params(
     return gap, speed, spacing, level_index
 
 
-def normalize_inputs(bird: Bird, pipes: list[Pipe], config: SimulationConfig) -> list[float]:
-    """Build normalized NN inputs in stable ranges.
+def normalise_inputs(bird: Bird, pipes: list[Pipe], config: SimulationConfig) -> list[float]:
+    """Build normalised NN inputs in stable ranges.
 
     Layout:
-      1) bird y centered to [-1, 1]
-      2) bird velocity normalized by max abs velocity to [-1, 1]
+      1) bird y centred to [-1, 1]
+      2) bird velocity normalised by max abs velocity to [-1, 1]
       3) horizontal distance to next pipe in [0, 1]
-      4) gap-center error normalized by half-gap to [-1, 1]
-      5) delta to gap top normalized by world height to [-1, 1]
-      6) delta to gap bottom normalized by world height to [-1, 1]
+      4) gap-centre error normalised by half-gap to [-1, 1]
+      5) delta to gap top normalised by world height to [-1, 1]
+      6) delta to gap bottom normalised by world height to [-1, 1]
     """
     height = config.world_height if config.world_height > 0 else 1.0
     width = config.world_width if config.world_width > 0 else 1.0
@@ -354,7 +354,7 @@ def simulate_genome(
             if record_trace:
                 record_pipe(spawned_pipe)
 
-        inputs = normalize_inputs(bird, pipes, config)
+        inputs = normalise_inputs(bird, pipes, config)
         output = genome.activate(inputs)[0]
         flap = decide_flap(
             output,
@@ -415,7 +415,7 @@ def simulate_genome(
             dx_to_next_pipe = next_pipe.x - bird.x
             proximity = proximity_weight(dx_to_next_pipe=dx_to_next_pipe, ramp_distance=effective_pipe_spacing)
             clamped_abs_gap_error = clamp(abs_gap_error, 0.0, config.abs_gap_error_clamp)
-            normalized_abs_gap_error = clamp(
+            normalised_abs_gap_error = clamp(
                 clamped_abs_gap_error / max(config.abs_gap_error_clamp, 1e-6),
                 0.0,
                 1.0,
@@ -423,17 +423,17 @@ def simulate_genome(
 
             if config.enable_centering_reward:
                 shaping_reward_total += (
-                    config.centering_reward_scale * (1.0 - normalized_abs_gap_error) * proximity
+                    config.centering_reward_scale * (1.0 - normalised_abs_gap_error) * proximity
                 )
             if config.enable_progress_reward and previous_abs_gap_error_norm is not None:
-                progress = previous_abs_gap_error_norm - normalized_abs_gap_error
+                progress = previous_abs_gap_error_norm - normalised_abs_gap_error
                 progress = clamp(progress, -config.progress_reward_clamp, config.progress_reward_clamp)
                 shaping_reward_total += config.progress_reward_scale * progress * proximity
 
-            previous_abs_gap_error_norm = normalized_abs_gap_error
+            previous_abs_gap_error_norm = normalised_abs_gap_error
             proximity_weight_sum += proximity
             proximity_weight_count += 1
-            abs_gap_error_sum += normalized_abs_gap_error
+            abs_gap_error_sum += normalised_abs_gap_error
             abs_gap_error_count += 1
 
         if reached_first_pipe:
