@@ -70,6 +70,8 @@
     vignetteGradient: null,
     groundGradient: null,
     clouds: [],
+    generationCache: {},
+    generationLoadToken: 0,
   };
 
   const setStatus = (text) => { if (els.status) els.status.textContent = text; };
@@ -130,8 +132,45 @@
     };
   }
 
+  async function fetchJsonWithDiagnostics(path) {
+    const attemptedUrl = new URL(path, window.location.href).href;
+    const response = await fetch(path, { cache: "no-store" });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status} ${response.statusText}\nURL: ${attemptedUrl}`);
+    }
+    const raw = await response.text();
+    try {
+      return JSON.parse(raw);
+    } catch (error) {
+      const contentLength = response.headers.get("content-length") || "unknown";
+      const start = raw.slice(0, 120);
+      const end = raw.slice(-120);
+      throw new Error(
+        [
+          `Failed to parse JSON: ${error?.message || error}`,
+          `URL: ${attemptedUrl}`,
+          `Content-Length: ${contentLength}`,
+          `Received chars: ${raw.length}`,
+          `Starts with: ${JSON.stringify(start)}`,
+          `Ends with: ${JSON.stringify(end)}`,
+        ].join("\n"),
+      );
+    }
+  }
+
+  async function resolveGeneration(index) {
+    if (state.generationCache[index]) return state.generationCache[index];
+    const summary = state.generations?.[index];
+    const filePath = summary?.file;
+    if (!filePath) return summary || null;
+
+    const generation = normalizeReplayData({ generations: [await fetchJsonWithDiagnostics(`./${filePath}?v=${Date.now()}`)] }).generations[0];
+    state.generationCache[index] = generation;
+    return generation;
+  }
+
   function getGeneration() {
-    return state.generations?.[state.generationIndex] || null;
+    return state.generationCache[state.generationIndex] || state.generations?.[state.generationIndex] || null;
   }
 
   function buildTraces(generation) {
@@ -254,12 +293,15 @@
     }
   }
 
-  function loadGeneration(index) {
+  async function loadGeneration(index) {
     const total = state.generations?.length || 0;
     if (!total) return;
     state.generationIndex = clamp(index, 0, total - 1);
+    const loadToken = ++state.generationLoadToken;
+    const generation = await resolveGeneration(state.generationIndex);
+    if (loadToken !== state.generationLoadToken) return;
     state.playT = 0;
-    state.traces = buildTraces(getGeneration());
+    state.traces = buildTraces(generation);
     buildPipeTimeline();
     if (els.generationSlider) els.generationSlider.value = String(state.generationIndex);
     applyFrame(0);
@@ -519,7 +561,7 @@
 
     const finishGeneration = () => {
       if (state.playing && state.autoplayEnabled && state.generationIndex < (state.generations.length - 1)) {
-        loadGeneration(state.generationIndex + 1);
+        void loadGeneration(state.generationIndex + 1);
       } else {
         const lastFrameT = Math.max(0, state.tracesMaxLen - 1);
         applyFrame(lastFrameT);
@@ -559,10 +601,10 @@
       state.playing = !state.playing;
       els.playPauseBtn.textContent = state.playing ? "Pause sim" : "Play sim";
     });
-    els.prevGenBtn?.addEventListener("click", () => loadGeneration(state.generationIndex - 1));
-    els.nextGenBtn?.addEventListener("click", () => loadGeneration(state.generationIndex + 1));
+    els.prevGenBtn?.addEventListener("click", () => { void loadGeneration(state.generationIndex - 1); });
+    els.nextGenBtn?.addEventListener("click", () => { void loadGeneration(state.generationIndex + 1); });
     els.autoplayToggle?.addEventListener("change", (e) => { state.autoplayEnabled = Boolean(e.target.checked); });
-    els.generationSlider?.addEventListener("input", (e) => loadGeneration(Number(e.target.value) || 0));
+    els.generationSlider?.addEventListener("input", (e) => { void loadGeneration(Number(e.target.value) || 0); });
     els.speedSlider?.addEventListener("input", (e) => { state.simSpeedMultiplier = clamp((Number(e.target.value) || 1500) / 1000, 0.5, 3); });
     els.trailToggle?.addEventListener("change", (e) => { state.showTrails = Boolean(e.target.checked); });
     els.debugToggle?.addEventListener("change", (e) => { state.showDebug = Boolean(e.target.checked); });
@@ -576,17 +618,14 @@
     const path = `./training_replay.json?v=${Date.now()}`;
     const attemptedUrl = new URL(path, window.location.href).href;
     try {
-      const response = await fetch(path, { cache: "no-store" });
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status} ${response.statusText}\nURL: ${attemptedUrl}`);
-      }
-      const data = await response.json();
+      const data = await fetchJsonWithDiagnostics(path);
       const normalized = normalizeReplayData(data);
       if (!Array.isArray(normalized.generations) || normalized.generations.length === 0) {
         throw new Error("training_replay.json loaded but has 0 generations.");
       }
-      const invalidGeneration = normalized.generations.find((generation) => !Array.isArray(generation.genomes));
-      if (invalidGeneration) {
+      const hasShards = Array.isArray(normalized.generation_files) && normalized.generation_files.length > 0;
+      const invalidGeneration = normalized.generations.find((generation) => !Array.isArray(generation.genomes) && !generation.file);
+      if (!hasShards && invalidGeneration) {
         throw new Error("Invalid schema: expected generations[].genomes[].frames[].");
       }
       return normalized;
@@ -613,6 +652,7 @@
       const data = await fetchReplay();
       state.replay = data;
       state.generations = Array.isArray(data.generations) ? data.generations : [];
+      state.generationCache = {};
       sizeCanvas();
       if (els.generationSlider) {
         els.generationSlider.min = "0";
@@ -620,7 +660,7 @@
       }
       setError("");
       setStatus(`Loaded ${state.generations.length} generations from training_replay.json.`);
-      loadGeneration(0);
+      await loadGeneration(0);
       requestAnimationFrame(animate);
     } catch (error) {
       setStatus("Failed to initialize training replay.");
