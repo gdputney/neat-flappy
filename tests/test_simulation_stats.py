@@ -271,12 +271,33 @@ class SimulationStatsTests(unittest.TestCase):
         result = simulate_genome(genome, config)
 
         self.assertIn("death_reason", result)
-        self.assertIn(result["death_reason"], {"hit_ground", "hit_pipe", "max_steps"})
+        self.assertIn(result["death_reason"], {"hit_ground", "hit_pipe", "max_steps", "max_pipes"})
         self.assertIn("death_bird_y", result)
         self.assertIn("death_bird_velocity", result)
         self.assertIn("screen_bounds", result)
         self.assertEqual(result["screen_bounds"]["y_min"], 0.0)
         self.assertEqual(result["screen_bounds"]["y_max"], config.world_height)
+
+
+    def test_simulate_genome_ignores_max_steps_when_max_pipes_is_set(self) -> None:
+        config = SimulationConfig(max_steps=1, max_pipes=5, seed=5)
+        tracker = InnovationTracker()
+        genome = create_initial_genome(input_size=NETWORK_INPUT_SIZE, output_size=1, tracker=tracker)
+
+        result = simulate_genome(genome, config)
+
+        self.assertGreater(result["steps_alive"], 1)
+        self.assertNotEqual(result["death_reason"], "max_steps")
+
+    def test_simulate_genome_honors_max_pipes_limit(self) -> None:
+        config = SimulationConfig(max_steps=5000, max_pipes=0, seed=5)
+        tracker = InnovationTracker()
+        genome = create_initial_genome(input_size=NETWORK_INPUT_SIZE, output_size=1, tracker=tracker)
+
+        result = simulate_genome(genome, config)
+
+        self.assertEqual(result["pipes_passed"], 0)
+        self.assertEqual(result["death_reason"], "max_pipes")
 
 
 
@@ -373,6 +394,12 @@ class CliParsingTests(unittest.TestCase):
         self.assertEqual(args.max_steps, 321)
         self.assertTrue(args.deterministic_pipes)
         self.assertEqual(args.flap_policy, "deterministic")
+
+    def test_parse_args_accepts_max_pipes(self) -> None:
+        with patch("sys.argv", ["main.py", "--max-pipes", "12"]):
+            args = parse_args()
+
+        self.assertEqual(args.max_pipes, 12)
 
     def test_parse_args_save_simulation_json_defaults_to_false(self) -> None:
         with patch("sys.argv", ["main.py"]):
