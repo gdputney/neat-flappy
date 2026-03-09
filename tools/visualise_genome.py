@@ -1,7 +1,7 @@
-"""Visualize a saved NEAT genome as DOT and PNG.
+"""Visualise a saved NEAT genome as DOT and PNG.
 
 Usage:
-    python tools/visualize_genome.py runs/run_xxx/best_genome.json
+    python tools/visualise_genome.py runs/run_xxx/best_genome.json
 """
 
 from __future__ import annotations

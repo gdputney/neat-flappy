@@ -6,8 +6,8 @@ import unittest
 from pathlib import Path
 
 
-class VisualizeGenomeScriptTests(unittest.TestCase):
-    def test_visualize_genome_writes_dot_and_png(self) -> None:
+class VisualiseGenomeScriptTests(unittest.TestCase):
+    def test_visualise_genome_writes_dot_and_png(self) -> None:
         sample = {
             "genome": {
                 "node_genes": [
@@ -32,7 +32,7 @@ class VisualizeGenomeScriptTests(unittest.TestCase):
             subprocess.run(
                 [
                     "python",
-                    "tools/visualize_genome.py",
+                    "tools/visualise_genome.py",
                     str(genome_path),
                     "--dot-out",
                     str(dot_path),

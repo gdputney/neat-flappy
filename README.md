@@ -157,12 +157,12 @@ Viewer controls include:
 - Show many birds
 - Show Brain (rank 1 only; output is shown as `(not recorded)` if absent in frame data)
 
-## Visualize a saved genome
+## Visualise a saved genome
 
-Generate a DOT + PNG network visualization from a saved best genome:
+Generate a DOT + PNG network visualisation from a saved best genome:
 
 ```bash
-python tools/visualize_genome.py runs/run_<timestamp>/best_genome.json
+python tools/visualise_genome.py runs/run_<timestamp>/best_genome.json
 ```
 
 This writes `best_genome.dot` and `best_genome.png` in the current directory by default.
