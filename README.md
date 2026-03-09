@@ -48,10 +48,10 @@ Useful options:
 Example:
 
 ```bash
-python main.py --seed 7 --csv --plot --deterministic-pipes --flap-policy deterministic
+python main.py --generations 40 --population-size 100 --max-pipes 100 --enable-curriculum --deterministic-pipes --flap-policy deterministic --record-training-replay --csv --plot
 
 # Optional: also persist full simulation data at ./simulation.json
-python main.py --seed 7 --save-simulation-json
+python main.py --save-simulation-json
 ```
 
 Per run, the script now writes:
