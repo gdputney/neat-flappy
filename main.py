@@ -1129,10 +1129,33 @@ def write_training_replay(
         "pipe_spacing": config.pipe_spacing,
         "bird_x": bird_defaults.x,
     }
+    shards_dir = output_path.parent / "training_replay"
+    shards_dir.mkdir(parents=True, exist_ok=True)
+    for stale_shard in shards_dir.glob("generation_*.json"):
+        stale_shard.unlink(missing_ok=True)
+
+    generation_files: list[str] = []
+    generation_manifest: list[dict[str, Any]] = []
+    for generation in replay_generations:
+        generation_index = int(generation.get("generation", len(generation_files)))
+        shard_name = f"generation_{generation_index:05d}.json"
+        shard_path = shards_dir / shard_name
+        write_json_atomic(shard_path, generation, config)
+        generation_files.append(f"training_replay/{shard_name}")
+        generation_manifest.append(
+            {
+                "generation": generation_index,
+                "top_k": int(generation.get("top_k", max(1, replay_top_k))),
+                "genomes": len(generation.get("genomes", [])),
+                "file": f"training_replay/{shard_name}",
+            }
+        )
+
     payload = {
         "version": 1,
         "config": config_payload,
-        "generations": replay_generations,
+        "generation_files": generation_files,
+        "generations": generation_manifest,
     }
     return write_json_atomic(output_path, payload, config)
 

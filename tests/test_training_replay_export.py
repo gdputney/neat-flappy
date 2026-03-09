@@ -67,8 +67,6 @@ class TrainingReplayExportTests(unittest.TestCase):
         after = {path.name for path in runs_dir.glob("run_*")} if runs_dir.exists() else set()
         created = sorted(after - before)
         self.assertTrue(created, "expected a new run directory")
-        run_dir = runs_dir / created[-1]
-
         replay_path = repo_root / "web" / "training_replay.json"
         self.assertTrue(replay_path.exists())
 
@@ -88,9 +86,15 @@ class TrainingReplayExportTests(unittest.TestCase):
             },
             set(payload.get("config", {}).keys()),
         )
+        self.assertEqual(2, len(payload.get("generation_files", [])))
         self.assertEqual(2, len(payload.get("generations", [])))
 
-        first_generation = payload.get("generations", [{}])[0]
+        first_generation_summary = payload.get("generations", [{}])[0]
+        self.assertIn("file", first_generation_summary)
+        first_generation_path = repo_root / "web" / first_generation_summary["file"]
+        self.assertTrue(first_generation_path.exists())
+
+        first_generation = json.loads(first_generation_path.read_text(encoding="utf-8"))
         first_genome = (first_generation.get("genomes") or [{}])[0]
         first_frame = (first_genome.get("frames") or [{}])[0]
         frame_pipes = first_frame.get("pipes") or []
@@ -99,7 +103,9 @@ class TrainingReplayExportTests(unittest.TestCase):
         self.assertIn("gap_y", frame_pipes[0])
         self.assertIn("gap_h", frame_pipes[0])
 
-        for generation in payload.get("generations", []):
+        for generation_summary in payload.get("generations", []):
+            shard_path = repo_root / "web" / generation_summary.get("file", "")
+            generation = json.loads(shard_path.read_text(encoding="utf-8"))
             self.assertNotIn("episode_index", generation)
             genomes = generation.get("genomes", [])
             self.assertLessEqual(len(genomes), 4)
