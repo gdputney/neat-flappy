@@ -289,6 +289,27 @@ class SimulationStatsTests(unittest.TestCase):
         self.assertEqual(result["death_reason"], "max_pipes")
 
 
+    def test_simulate_genome_ignores_max_steps_when_max_pipes_is_set(self) -> None:
+        config = SimulationConfig(max_steps=1, max_pipes=5, seed=5)
+        tracker = InnovationTracker()
+        genome = create_initial_genome(input_size=NETWORK_INPUT_SIZE, output_size=1, tracker=tracker)
+
+        result = simulate_genome(genome, config)
+
+        self.assertGreater(result["steps_alive"], 1)
+        self.assertNotEqual(result["death_reason"], "max_steps")
+
+    def test_simulate_genome_honors_max_pipes_limit(self) -> None:
+        config = SimulationConfig(max_steps=5000, max_pipes=0, seed=5)
+        tracker = InnovationTracker()
+        genome = create_initial_genome(input_size=NETWORK_INPUT_SIZE, output_size=1, tracker=tracker)
+
+        result = simulate_genome(genome, config)
+
+        self.assertEqual(result["pipes_passed"], 0)
+        self.assertEqual(result["death_reason"], "max_pipes")
+
+
 
 class SimulationJsonOutputFlagTests(unittest.TestCase):
     def setUp(self) -> None:

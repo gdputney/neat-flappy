@@ -32,6 +32,8 @@ Useful options:
 - `--flap-policy {probabilistic,hysteresis,deterministic}` to choose stochastic vs thresholded flap control.
 - `--population-size <int>` to set the number of genomes per generation (default `100`).
 - `--generations <int>` to set how many generations to evolve (default `10`).
+- `--max-steps <int>` to cap episode length by simulation steps (default `5000`).
+- `--max-pipes <int>` to cap episode length by pipes passed; when set, this takes precedence and step-count termination is disabled.
 - `--target-species <int>` and `--compatibility-adjust-step <float>` to tune speciation threshold adaptation (`8` and `0.02` by default).
 - `--csv` to additionally save `fitness.csv` in the run folder.
 - `--enable-curriculum` to turn on milestone-based difficulty progression.
