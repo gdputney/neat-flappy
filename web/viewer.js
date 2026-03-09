@@ -72,6 +72,7 @@
     clouds: [],
     generationCache: {},
     generationLoadToken: 0,
+    generationLoading: false,
   };
 
   const setStatus = (text) => { if (els.status) els.status.textContent = text; };
@@ -296,10 +297,26 @@
   async function loadGeneration(index) {
     const total = state.generations?.length || 0;
     if (!total) return;
-    state.generationIndex = clamp(index, 0, total - 1);
+    const targetIndex = clamp(index, 0, total - 1);
     const loadToken = ++state.generationLoadToken;
-    const generation = await resolveGeneration(state.generationIndex);
+    state.generationLoading = true;
+    let generation = null;
+    try {
+      generation = await resolveGeneration(targetIndex);
+    } catch (error) {
+      setStatus("Failed to load generation replay.");
+      setError(String(error?.message || error));
+      return;
+    } finally {
+      if (loadToken === state.generationLoadToken) state.generationLoading = false;
+    }
     if (loadToken !== state.generationLoadToken) return;
+    if (!Array.isArray(generation?.genomes)) {
+      setStatus("Failed to load generation replay.");
+      setError(`Generation ${targetIndex} missing genomes[] payload. Please regenerate training replay.`);
+      return;
+    }
+    state.generationIndex = targetIndex;
     state.playT = 0;
     state.traces = buildTraces(generation);
     buildPipeTimeline();
@@ -557,7 +574,7 @@
   }
 
   function stepReplay() {
-    if (!getGeneration()) return;
+    if (!getGeneration() || state.generationLoading) return;
 
     const finishGeneration = () => {
       if (state.playing && state.autoplayEnabled && state.generationIndex < (state.generations.length - 1)) {
