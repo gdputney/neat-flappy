@@ -20,6 +20,8 @@ HIDDEN_COLOR = "#54A24B"
 DISABLED_EDGE_COLOR = "#BBBBBB"
 POS_EDGE_COLOR = "#2CA02C"
 NEG_EDGE_COLOR = "#D62728"
+PLOT_BACKGROUND = "#F7F9FC"
+CANVAS_BACKGROUND = "#FFFFFF"
 
 
 def parse_args() -> argparse.Namespace:
@@ -71,9 +73,9 @@ def dot_from_genome(genome: dict[str, Any]) -> tuple[str, int, int]:
     header_lines = [
         "digraph Genome {",
         "  rankdir=LR;",
-        '  graph [bgcolor="white"];',
-        '  node [shape=circle, style=filled, fontname="Helvetica"];',
-        '  edge [fontname="Helvetica"];',
+        '  graph [bgcolor="white", pad="0.4", nodesep="0.45", ranksep="0.75", splines="curved"];',
+        '  node [shape=circle, style="filled,setlinewidth(1.4)", fontname="Helvetica", fontsize=10, width=0.95, fixedsize=true, color="#1F2937"];',
+        '  edge [fontname="Helvetica", fontsize=9, arrowsize=0.8, penwidth=1.0];',
     ]
     node_lines: list[str] = []
     edge_lines: list[str] = []
@@ -99,7 +101,7 @@ def dot_from_genome(genome: dict[str, Any]) -> tuple[str, int, int]:
             color = DISABLED_EDGE_COLOR
         penwidth = max(0.5, min(6.0, abs(weight) * 2.0))
         edge_lines.append(
-            f'  n{source} -> n{target} [label="{weight:+.2f}", color="{color}", style="{style}", penwidth={penwidth:.2f}];'
+            f'  n{source} -> n{target} [label="{weight:+.2f}", color="{color}", fontcolor="{color}", style="{style}", penwidth={penwidth:.2f}, alpha=0.85];'
         )
 
     dot_lines = [*header_lines, *node_lines, *edge_lines, "}"]
@@ -140,7 +142,8 @@ def render_png_with_matplotlib(genome: dict[str, Any], png_path: Path) -> None:
     for idx, node in enumerate(missing):
         positions[node.get("id")] = (0.50, 0.1 + 0.8 * (idx / max(1, len(missing))))
 
-    fig, ax = plt.subplots(figsize=(12, 7))
+    fig, ax = plt.subplots(figsize=(13, 8), facecolor=PLOT_BACKGROUND)
+    ax.set_facecolor(CANVAS_BACKGROUND)
 
     for conn in connections:
         source = conn["in_node"]
@@ -157,16 +160,26 @@ def render_png_with_matplotlib(genome: dict[str, Any], png_path: Path) -> None:
             color = DISABLED_EDGE_COLOR
         linewidth = max(0.5, min(6.0, abs(weight) * 2.0))
 
+        connection_alpha = 0.85 if enabled else 0.6
         ax.annotate(
             "",
             xy=(x2, y2),
             xytext=(x1, y1),
-            arrowprops=dict(arrowstyle="->", color=color, lw=linewidth, linestyle=linestyle, alpha=0.85),
+            arrowprops=dict(arrowstyle="-|>", color=color, lw=linewidth, linestyle=linestyle, alpha=connection_alpha),
             zorder=1,
         )
         mx = (x1 + x2) / 2.0
         my = (y1 + y2) / 2.0
-        ax.text(mx, my, f"{weight:+.2f}", fontsize=8, color=color, ha="center", va="center")
+        ax.text(
+            mx,
+            my,
+            f"{weight:+.2f}",
+            fontsize=8,
+            color=color,
+            ha="center",
+            va="center",
+            bbox=dict(boxstyle="round,pad=0.15", facecolor="#FFFFFFCC", edgecolor="none"),
+        )
 
     for index, node in enumerate(nodes):
         node_id = node.get("id", index)
@@ -178,14 +191,20 @@ def render_png_with_matplotlib(genome: dict[str, Any], png_path: Path) -> None:
         elif node_type == "output":
             color = OUTPUT_COLOR
 
-        circle = plt.Circle((x, y), 0.03, facecolor=color, edgecolor="#222222", linewidth=1.2, zorder=3)
+        circle = plt.Circle((x, y), 0.034, facecolor=color, edgecolor="#1F2937", linewidth=1.4, zorder=3)
         ax.add_patch(circle)
-        ax.text(x, y, node_label(node, index), ha="center", va="center", fontsize=8, color="white", zorder=4)
+        ax.text(x, y, node_label(node, index), ha="center", va="center", fontsize=8, color="white", zorder=4, fontweight="bold")
+
+    ax.text(0.08, 0.965, "Inputs", fontsize=11, color="#334155", fontweight="bold", ha="center", va="center")
+    ax.text(0.50, 0.965, "Hidden", fontsize=11, color="#334155", fontweight="bold", ha="center", va="center")
+    ax.text(0.92, 0.965, "Outputs", fontsize=11, color="#334155", fontweight="bold", ha="center", va="center")
+
+    ax.set_title("NEAT Genome Topology", fontsize=16, fontweight="bold", color="#1F2937", pad=16)
 
     ax.set_xlim(0.0, 1.0)
     ax.set_ylim(0.0, 1.0)
     ax.axis("off")
-    plt.tight_layout()
+    plt.tight_layout(pad=2.0)
     png_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(png_path, dpi=200)
     plt.close(fig)
