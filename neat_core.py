@@ -31,6 +31,10 @@ class Genome:
     node_genes: list[dict[str, Any]] = field(default_factory=list)
     connection_genes: list[dict[str, Any]] = field(default_factory=list)
     fitness: float = 0.0
+    _compiled_topo_order: list[int] = field(default_factory=list)
+    _compiled_incoming_map: dict[int, list[dict[str, Any]]] = field(default_factory=dict)
+    _compiled_enabled_edges: list[dict[str, Any]] = field(default_factory=list)
+    _compile_dirty: bool = True
 
     def activate(self, inputs: list[float]) -> list[float]:
         """Run feedforward evaluation via topological ordering over enabled edges."""
@@ -40,57 +44,14 @@ class Genome:
             raise ValueError(f"Expected {len(input_nodes)} inputs, received {len(inputs)}")
 
         node_lookup = {int(node["id"]): node for node in self.node_genes}
-        self._repair_cycles_in_enabled_graph()
-        enabled_edges = [gene for gene in self.connection_genes if gene.get("enabled", True)]
-
-        indegree = {int(node["id"]): 0 for node in self.node_genes}
-        outgoing: dict[int, list[dict[str, Any]]] = {int(node["id"]): [] for node in self.node_genes}
-        for edge in enabled_edges:
-            in_node = int(edge["in_node"])
-            out_node = int(edge["out_node"])
-            indegree[out_node] = indegree.get(out_node, 0) + 1
-            outgoing.setdefault(in_node, []).append(edge)
-
-        queue = [node_id for node_id, degree in indegree.items() if degree == 0]
-        topo_order: list[int] = []
-        while queue:
-            current = queue.pop(0)
-            topo_order.append(current)
-            for edge in outgoing.get(current, []):
-                out_node = int(edge["out_node"])
-                indegree[out_node] -= 1
-                if indegree[out_node] == 0:
-                    queue.append(out_node)
-
-        if len(topo_order) != len(indegree):
-            self._repair_cycles_in_enabled_graph()
-            enabled_edges = [gene for gene in self.connection_genes if gene.get("enabled", True)]
-            indegree = {int(node["id"]): 0 for node in self.node_genes}
-            outgoing = {int(node["id"]): [] for node in self.node_genes}
-            for edge in enabled_edges:
-                in_node = int(edge["in_node"])
-                out_node = int(edge["out_node"])
-                indegree[out_node] = indegree.get(out_node, 0) + 1
-                outgoing.setdefault(in_node, []).append(edge)
-
-            queue = [node_id for node_id, degree in indegree.items() if degree == 0]
-            topo_order = []
-            while queue:
-                current = queue.pop(0)
-                topo_order.append(current)
-                for edge in outgoing.get(current, []):
-                    out_node = int(edge["out_node"])
-                    indegree[out_node] -= 1
-                    if indegree[out_node] == 0:
-                        queue.append(out_node)
+        self._compile_if_needed()
+        enabled_edges = self._compiled_enabled_edges
+        topo_order = self._compiled_topo_order
+        incoming_map = self._compiled_incoming_map
 
         values = {int(node["id"]): 0.0 for node in self.node_genes}
         for input_value, node in zip(inputs, input_nodes):
             values[int(node["id"])] = float(input_value)
-
-        incoming_map: dict[int, list[dict[str, Any]]] = {int(node["id"]): [] for node in self.node_genes}
-        for edge in enabled_edges:
-            incoming_map.setdefault(int(edge["out_node"]), []).append(edge)
 
         for node_id in topo_order:
             node = node_lookup[node_id]
@@ -136,12 +97,14 @@ class Genome:
         currently_enabled = bool(gene.get("enabled", True))
         if currently_enabled:
             gene["enabled"] = False
+            self._compile_dirty = True
             return
 
         in_node = int(gene["in_node"])
         out_node = int(gene["out_node"])
         if not self.would_create_cycle(in_node, out_node):
             gene["enabled"] = True
+            self._compile_dirty = True
 
     def _add_node_mutation(self, tracker: InnovationTracker | None = None) -> None:
         enabled_connections = [gene for gene in self.connection_genes if gene.get("enabled", True)]
@@ -150,6 +113,7 @@ class Genome:
 
         connection = random.choice(enabled_connections)
         connection["enabled"] = False
+        self._compile_dirty = True
 
         in_node = int(connection["in_node"])
         out_node = int(connection["out_node"])
@@ -176,6 +140,7 @@ class Genome:
                 "innovation": self._innovation_for(tracker, new_node_id, out_node),
             }
         )
+        self._compile_dirty = True
 
     def _add_connection_mutation(self, tracker: InnovationTracker | None = None) -> None:
         node_ids = [int(node["id"]) for node in self.node_genes]
@@ -213,6 +178,42 @@ class Genome:
                 "innovation": self._innovation_for(tracker, in_node, out_node),
             }
         )
+        self._compile_dirty = True
+
+    def _compile_if_needed(self) -> None:
+        if not self._compile_dirty:
+            return
+
+        self._repair_cycles_in_enabled_graph()
+        enabled_edges = [gene for gene in self.connection_genes if gene.get("enabled", True)]
+
+        indegree = {int(node["id"]): 0 for node in self.node_genes}
+        outgoing: dict[int, list[dict[str, Any]]] = {int(node["id"]): [] for node in self.node_genes}
+        for edge in enabled_edges:
+            in_node = int(edge["in_node"])
+            out_node = int(edge["out_node"])
+            indegree[out_node] = indegree.get(out_node, 0) + 1
+            outgoing.setdefault(in_node, []).append(edge)
+
+        queue: deque[int] = deque(node_id for node_id, degree in indegree.items() if degree == 0)
+        topo_order: list[int] = []
+        while queue:
+            current = queue.popleft()
+            topo_order.append(current)
+            for edge in outgoing.get(current, []):
+                out_node = int(edge["out_node"])
+                indegree[out_node] -= 1
+                if indegree[out_node] == 0:
+                    queue.append(out_node)
+
+        incoming_map: dict[int, list[dict[str, Any]]] = {int(node["id"]): [] for node in self.node_genes}
+        for edge in enabled_edges:
+            incoming_map.setdefault(int(edge["out_node"]), []).append(edge)
+
+        self._compiled_enabled_edges = enabled_edges
+        self._compiled_topo_order = topo_order
+        self._compiled_incoming_map = incoming_map
+        self._compile_dirty = False
 
     def crossover(self, other: "Genome") -> "Genome":
         if not isinstance(other, Genome):
@@ -354,6 +355,7 @@ class Genome:
                 key=lambda g: (int(g.get("innovation", -1)), -abs(float(g.get("weight", 0.0)))),
             )
             edge_to_disable["enabled"] = False
+            self._compile_dirty = True
 
     def _enabled_cyclic_nodes(self) -> set[int]:
         node_ids = {int(node["id"]) for node in self.node_genes}
