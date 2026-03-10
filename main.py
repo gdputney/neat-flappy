@@ -585,8 +585,14 @@ def adjust_compatibility_threshold(
     return threshold
 
 
-def evolve_population(population: list[Genome], tracker: InnovationTracker, config: SimulationConfig) -> list[Genome]:
-    species = speciate_population(population, config.compatibility_threshold)
+def evolve_population(
+    population: list[Genome],
+    tracker: InnovationTracker,
+    config: SimulationConfig,
+    species: list[list[Genome]] | None = None,
+) -> list[Genome]:
+    if species is None:
+        species = speciate_population(population, config.compatibility_threshold)
 
     elite_count = min(max(1, len(population) // 8), 5, len(population))
     global_elites = sorted(population, key=lambda genome: genome.fitness, reverse=True)[:elite_count]
@@ -782,7 +788,8 @@ def run_simulation(
         )
         best_hidden_nodes = hidden_node_count(population[best_result["genome_index"]])
         best_enabled_connections = enabled_connection_count(population[best_result["genome_index"]])
-        species_count = len(speciate_population(population, config.compatibility_threshold))
+        species = speciate_population(population, config.compatibility_threshold)
+        species_count = len(species)
         threshold_used = config.compatibility_threshold
         next_threshold = adjust_compatibility_threshold(
             threshold=threshold_used,
@@ -793,7 +800,6 @@ def run_simulation(
         )
 
         if config.curriculum_mode == "species":
-            species = speciate_population(population, config.compatibility_threshold)
             result_by_genome_index = {result["genome_index"]: result for result in generation_results}
             species_champion_max = 0
             for group in species:
@@ -904,7 +910,7 @@ def run_simulation(
             )
         best_pipes_ever = updated_best_pipes_ever
         config.compatibility_threshold = next_threshold
-        population = evolve_population(population, tracker, config)
+        population = evolve_population(population, tracker, config, species=species)
 
     output["best_genome"] = {
         "generation": best_generation,
