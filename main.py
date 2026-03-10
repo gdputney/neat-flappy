@@ -758,7 +758,7 @@ def run_simulation(
                 pipe_gap=effective_gap,
                 pipe_speed=effective_speed,
                 pipe_spacing=effective_spacing,
-                record_replay_trace=record_training_replay,
+                record_replay_trace=False,
                 replay_max_steps=replay_max_steps,
                 replay_frame_stride=replay_frame_stride,
             )
@@ -888,7 +888,22 @@ def run_simulation(
             )
             generation_replay_genomes = []
             for rank, result in enumerate(sorted_by_fitness[: replay_top_k], start=1):
-                trace = result.get("replay_trace") or {}
+                genome_index = int(result.get("genome_index", -1))
+                if genome_index < 0 or genome_index >= len(population):
+                    continue
+                replay_result = evaluate_genome(
+                    population[genome_index],
+                    config,
+                    generation_index,
+                    genome_index,
+                    pipe_gap=effective_gap,
+                    pipe_speed=effective_speed,
+                    pipe_spacing=effective_spacing,
+                    record_replay_trace=True,
+                    replay_max_steps=replay_max_steps,
+                    replay_frame_stride=replay_frame_stride,
+                )
+                trace = replay_result.get("replay_trace") or {}
                 trace_frames = trace.get("frames", [])
                 generation_replay_genomes.append(
                     {
@@ -900,7 +915,7 @@ def run_simulation(
                         "frames": trace_frames,
                         "meta": {
                             "generation": generation_index,
-                            "genome_index": int(result.get("genome_index", -1)),
+                            "genome_index": genome_index,
                             "fitness_episode": trace.get("meta", {}).get("fitness_episode", 0.0),
                             "pipes_passed_episode": trace.get("meta", {}).get("pipes_passed_episode", 0),
                             "steps_alive_episode": trace.get("meta", {}).get("steps_alive_episode", len(trace_frames)),
