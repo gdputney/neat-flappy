@@ -134,6 +134,38 @@ class NeatCycleSafetyTests(unittest.TestCase):
                     msg=f"Mutate produced cycle-closing edge: {gene}",
                 )
 
+    def test_mutate_respects_max_hidden_nodes_cap(self) -> None:
+        tracker = InnovationTracker(next_innovation=2)
+        genome = self._base_genome()
+
+        for _ in range(20):
+            genome.mutate(
+                tracker,
+                toggle_connection_prob=0.0,
+                add_connection_prob=0.0,
+                add_node_prob=1.0,
+                max_hidden_nodes=0,
+            )
+
+        hidden_nodes = [node for node in genome.node_genes if node.get("type") == "hidden"]
+        self.assertEqual(len(hidden_nodes), 0)
+
+    def test_mutate_respects_max_enabled_connections_cap(self) -> None:
+        tracker = InnovationTracker(next_innovation=2)
+        genome = self._base_genome()
+
+        for _ in range(20):
+            genome.mutate(
+                tracker,
+                toggle_connection_prob=0.0,
+                add_connection_prob=1.0,
+                add_node_prob=0.0,
+                max_enabled_connections=2,
+            )
+
+        enabled_connections = [gene for gene in genome.connection_genes if gene.get("enabled", True)]
+        self.assertEqual(len(enabled_connections), 2)
+
 
 if __name__ == "__main__":
     unittest.main()
