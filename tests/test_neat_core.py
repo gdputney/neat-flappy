@@ -166,6 +166,25 @@ class NeatCycleSafetyTests(unittest.TestCase):
         enabled_connections = [gene for gene in genome.connection_genes if gene.get("enabled", True)]
         self.assertEqual(len(enabled_connections), 2)
 
+    def test_add_node_mutation_enforces_enabled_connection_cap(self) -> None:
+        tracker = InnovationTracker(next_innovation=2)
+        genome = self._base_genome()
+
+        genome._add_node_mutation(tracker, max_enabled_connections=2)
+
+        hidden_nodes = [node for node in genome.node_genes if node.get("type") == "hidden"]
+        self.assertEqual(len(hidden_nodes), 0)
+
+    def test_add_connection_mutation_enforces_cap(self) -> None:
+        tracker = InnovationTracker(next_innovation=2)
+        genome = self._base_genome()
+        genome.node_genes.append({"id": 3, "type": "hidden", "bias": 0.0})
+
+        genome._add_connection_mutation(tracker, max_enabled_connections=2)
+
+        enabled_connections = [gene for gene in genome.connection_genes if gene.get("enabled", True)]
+        self.assertEqual(len(enabled_connections), 2)
+
 
 if __name__ == "__main__":
     unittest.main()
