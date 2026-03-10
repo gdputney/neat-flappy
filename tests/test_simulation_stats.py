@@ -213,6 +213,47 @@ class SimulationStatsTests(unittest.TestCase):
         output = stream.getvalue()
         self.assertIn("max_steps=17", output)
 
+
+    def test_complexity_penalty_weight_reduces_fitness(self) -> None:
+        tracker = InnovationTracker()
+        genome_a = create_initial_genome(input_size=NETWORK_INPUT_SIZE, output_size=1, tracker=tracker)
+        genome_b = create_initial_genome(input_size=NETWORK_INPUT_SIZE, output_size=1, tracker=tracker)
+
+        base_config = SimulationConfig(max_steps=30, seed=21, deterministic_pipes=True, flap_policy="deterministic")
+        penalized_config = SimulationConfig(
+            max_steps=30,
+            seed=21,
+            deterministic_pipes=True,
+            flap_policy="deterministic",
+            complexity_penalty_weight=1.5,
+        )
+
+        base = evaluate_genome(genome_a, base_config, generation_index=0, genome_index=0)
+        penalized = evaluate_genome(genome_b, penalized_config, generation_index=0, genome_index=0)
+
+        self.assertLess(penalized["fitness"], base["fitness"])
+        self.assertGreaterEqual(penalized["complexity_penalty"], 0.0)
+
+    def test_generation_log_includes_complexity_settings(self) -> None:
+        config = SimulationConfig(
+            population_size=3,
+            generations=1,
+            max_steps=17,
+            seed=11,
+            max_hidden_nodes=12,
+            max_enabled_connections=34,
+            complexity_penalty_weight=0.5,
+        )
+
+        stream = io.StringIO()
+        with redirect_stdout(stream):
+            run_simulation(config)
+
+        output = stream.getvalue()
+        self.assertIn("max_hidden_nodes=12", output)
+        self.assertIn("max_enabled_connections=34", output)
+        self.assertIn("complexity_penalty_weight=0.5", output)
+
     def test_generation_pipe_stats_use_scalar_best_pipes(self) -> None:
         config = SimulationConfig(
             population_size=8,
@@ -422,6 +463,26 @@ class CliParsingTests(unittest.TestCase):
             args = parse_args()
 
         self.assertTrue(args.save_simulation_json)
+
+
+    def test_parse_args_accepts_complexity_controls(self) -> None:
+        with patch(
+            "sys.argv",
+            [
+                "main.py",
+                "--max-hidden-nodes",
+                "15",
+                "--max-enabled-connections",
+                "40",
+                "--complexity-penalty-weight",
+                "0.75",
+            ],
+        ):
+            args = parse_args()
+
+        self.assertEqual(args.max_hidden_nodes, 15)
+        self.assertEqual(args.max_enabled_connections, 40)
+        self.assertAlmostEqual(args.complexity_penalty_weight, 0.75)
 
 
 

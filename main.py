@@ -84,6 +84,7 @@ class SimulationConfig:
     mutation_add_node_prob: float = 0.18
     max_hidden_nodes: int | None = None
     max_enabled_connections: int | None = None
+    complexity_penalty_weight: float | None = None
     json_compact: bool = True
 
 
@@ -504,6 +505,12 @@ def simulate_genome(
     average_shaping_reward = (shaping_reward_total / steps_survived) if steps_survived > 0 else 0.0
     avg_abs_gap_error = (abs_gap_error_sum / abs_gap_error_count) if abs_gap_error_count > 0 else 0.0
     mean_proximity_weight = (proximity_weight_sum / proximity_weight_count) if proximity_weight_count > 0 else 0.0
+    complexity_penalty = 0.0
+    if config.complexity_penalty_weight is not None and config.complexity_penalty_weight > 0.0:
+        complexity_penalty = config.complexity_penalty_weight * float(
+            hidden_node_count(genome) + enabled_connection_count(genome)
+        )
+
     genome.fitness = (
         steps_survived
         + pipes_reward
@@ -511,6 +518,7 @@ def simulate_genome(
         + alive_bonus
         + shaping_reward
         - ceiling_penalty
+        - complexity_penalty
     )
     result = {
         "fitness": genome.fitness,
@@ -520,6 +528,8 @@ def simulate_genome(
         "pipes_reward": pipes_reward,
         "shaping_reward": shaping_reward,
         "ceiling_penalty": ceiling_penalty,
+        "complexity_penalty": complexity_penalty,
+        "complexity_units": hidden_node_count(genome) + enabled_connection_count(genome),
         "ceiling_touches": ceiling_touches,
         "reached_first_pipe_bonus": reached_first_pipe_bonus,
         "alive_bonus": alive_bonus,
@@ -552,6 +562,9 @@ def simulate_genome(
                     "pipe_speed": effective_pipe_speed,
                     "pipe_spacing": effective_pipe_spacing,
                     "flap_policy": config.flap_policy,
+                    "max_hidden_nodes": config.max_hidden_nodes,
+                    "max_enabled_connections": config.max_enabled_connections,
+                    "complexity_penalty_weight": config.complexity_penalty_weight,
                 },
             },
             "pipes": replay_pipes,
@@ -841,6 +854,9 @@ def run_simulation(
             f"mean_enabled_connections={population_mean_enabled_connections:.2f} "
             f"champ_hidden_nodes={best_hidden_nodes} "
             f"champ_enabled_connections={best_enabled_connections} "
+            f"max_hidden_nodes={config.max_hidden_nodes} "
+            f"max_enabled_connections={config.max_enabled_connections} "
+            f"complexity_penalty_weight={config.complexity_penalty_weight} "
             f"curriculum_level={curriculum_level} "
             f"curriculum_best_pipes_ever={updated_best_pipes_ever} "
             f"curriculum_gap={effective_gap:.1f} "
@@ -871,6 +887,9 @@ def run_simulation(
                 "best_enabled_connections": best_enabled_connections,
                 "population_mean_hidden_nodes": population_mean_hidden_nodes,
                 "population_mean_enabled_connections": population_mean_enabled_connections,
+                "max_hidden_nodes": config.max_hidden_nodes,
+                "max_enabled_connections": config.max_enabled_connections,
+                "complexity_penalty_weight": config.complexity_penalty_weight,
                 "curriculum_enabled": config.enable_curriculum,
                 "curriculum_level": curriculum_level,
                 "curriculum_best_pipes_ever": updated_best_pipes_ever,
@@ -1170,6 +1189,9 @@ def write_training_replay(
         "pipe_gap": config.pipe_gap,
         "pipe_speed": config.pipe_speed,
         "pipe_spacing": config.pipe_spacing,
+        "max_hidden_nodes": config.max_hidden_nodes,
+        "max_enabled_connections": config.max_enabled_connections,
+        "complexity_penalty_weight": config.complexity_penalty_weight,
         "bird_x": bird_defaults.x,
     }
     shards_dir = output_path.parent / "training_replay"
@@ -1273,6 +1295,9 @@ def write_web_evolution(
                 "first_pipe_x": config.world_width + 120.0,
                 "new_pipe_x": config.world_width + 50.0,
                 "offscreen_pipe_right_threshold": -5.0,
+                "max_hidden_nodes": config.max_hidden_nodes,
+                "max_enabled_connections": config.max_enabled_connections,
+                "complexity_penalty_weight": config.complexity_penalty_weight,
             },
         },
         "generations": [],
@@ -1471,6 +1496,15 @@ def parse_args() -> argparse.Namespace:
         default=SimulationConfig.max_enabled_connections,
         help="Hard cap on enabled connections per genome; add-connection mutations are skipped when reached",
     )
+    parser.add_argument(
+        "--complexity-penalty-weight",
+        type=float,
+        default=SimulationConfig.complexity_penalty_weight,
+        help=(
+            "Optional fitness penalty weight applied to (hidden_nodes + enabled_connections). "
+            "Set to 0 to disable."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -1530,6 +1564,11 @@ def main() -> None:
         max_hidden_nodes=max(0, args.max_hidden_nodes) if args.max_hidden_nodes is not None else None,
         max_enabled_connections=(
             max(0, args.max_enabled_connections) if args.max_enabled_connections is not None else None
+        ),
+        complexity_penalty_weight=(
+            max(0.0, args.complexity_penalty_weight)
+            if args.complexity_penalty_weight is not None
+            else None
         ),
         json_compact=not args.json_pretty,
     )

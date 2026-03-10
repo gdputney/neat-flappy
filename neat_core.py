@@ -80,16 +80,14 @@ class Genome:
 
         if random.random() < toggle_connection_prob:
             self._toggle_connection_enabled()
-        can_add_connection = (
-            max_enabled_connections is None
-            or sum(1 for gene in self.connection_genes if gene.get("enabled", True)) < max_enabled_connections
-        )
-        if random.random() < add_connection_prob and can_add_connection:
-            self._add_connection_mutation(tracker)
-        hidden_nodes = sum(1 for node in self.node_genes if node.get("type") == "hidden")
-        can_add_node = max_hidden_nodes is None or hidden_nodes < max_hidden_nodes
-        if random.random() < add_node_prob and can_add_node:
-            self._add_node_mutation(tracker)
+        if random.random() < add_connection_prob:
+            self._add_connection_mutation(tracker, max_enabled_connections=max_enabled_connections)
+        if random.random() < add_node_prob:
+            self._add_node_mutation(
+                tracker,
+                max_hidden_nodes=max_hidden_nodes,
+                max_enabled_connections=max_enabled_connections,
+            )
 
     def _perturb_connection_weights(self, sigma: float = 0.3, reset_chance: float = 0.1) -> None:
         for connection in self.connection_genes:
@@ -114,7 +112,20 @@ class Genome:
             gene["enabled"] = True
             self._compile_dirty = True
 
-    def _add_node_mutation(self, tracker: InnovationTracker | None = None) -> None:
+    def _add_node_mutation(
+        self,
+        tracker: InnovationTracker | None = None,
+        max_hidden_nodes: int | None = None,
+        max_enabled_connections: int | None = None,
+    ) -> None:
+        hidden_nodes = sum(1 for node in self.node_genes if node.get("type") == "hidden")
+        if max_hidden_nodes is not None and hidden_nodes >= max_hidden_nodes:
+            return
+
+        enabled_connection_count = sum(1 for gene in self.connection_genes if gene.get("enabled", True))
+        if max_enabled_connections is not None and (enabled_connection_count + 1) > max_enabled_connections:
+            return
+
         enabled_connections = [gene for gene in self.connection_genes if gene.get("enabled", True)]
         if not enabled_connections:
             return
@@ -150,7 +161,15 @@ class Genome:
         )
         self._compile_dirty = True
 
-    def _add_connection_mutation(self, tracker: InnovationTracker | None = None) -> None:
+    def _add_connection_mutation(
+        self,
+        tracker: InnovationTracker | None = None,
+        max_enabled_connections: int | None = None,
+    ) -> None:
+        enabled_connection_count = sum(1 for gene in self.connection_genes if gene.get("enabled", True))
+        if max_enabled_connections is not None and enabled_connection_count >= max_enabled_connections:
+            return
+
         node_ids = [int(node["id"]) for node in self.node_genes]
         if len(node_ids) < 2:
             return
