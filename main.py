@@ -80,6 +80,8 @@ class SimulationConfig:
     mutation_toggle_connection_prob: float = 0.03
     mutation_add_connection_prob: float = 0.3
     mutation_add_node_prob: float = 0.18
+    max_hidden_nodes: int | None = None
+    max_enabled_connections: int | None = None
     json_compact: bool = True
 
 
@@ -622,6 +624,8 @@ def evolve_population(population: list[Genome], tracker: InnovationTracker, conf
                 toggle_connection_prob=config.mutation_toggle_connection_prob,
                 add_connection_prob=config.mutation_add_connection_prob,
                 add_node_prob=config.mutation_add_node_prob,
+                max_hidden_nodes=config.max_hidden_nodes,
+                max_enabled_connections=config.max_enabled_connections,
             )
             next_population.append(child)
             generated_non_elites += 1
@@ -635,6 +639,8 @@ def evolve_population(population: list[Genome], tracker: InnovationTracker, conf
             toggle_connection_prob=config.mutation_toggle_connection_prob,
             add_connection_prob=config.mutation_add_connection_prob,
             add_node_prob=config.mutation_add_node_prob,
+            max_hidden_nodes=config.max_hidden_nodes,
+            max_enabled_connections=config.max_enabled_connections,
         )
         next_population.append(child)
 
@@ -1390,6 +1396,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--mutation-toggle-connection-prob", type=float, default=SimulationConfig.mutation_toggle_connection_prob)
     parser.add_argument("--mutation-add-connection-prob", type=float, default=SimulationConfig.mutation_add_connection_prob)
     parser.add_argument("--mutation-add-node-prob", type=float, default=SimulationConfig.mutation_add_node_prob)
+    parser.add_argument(
+        "--max-hidden-nodes",
+        type=int,
+        default=SimulationConfig.max_hidden_nodes,
+        help="Hard cap on hidden nodes per genome; add-node mutations are skipped when reached",
+    )
+    parser.add_argument(
+        "--max-enabled-connections",
+        type=int,
+        default=SimulationConfig.max_enabled_connections,
+        help="Hard cap on enabled connections per genome; add-connection mutations are skipped when reached",
+    )
     return parser.parse_args()
 
 
@@ -1446,6 +1464,10 @@ def main() -> None:
         mutation_toggle_connection_prob=clamp(args.mutation_toggle_connection_prob, 0.0, 1.0),
         mutation_add_connection_prob=clamp(args.mutation_add_connection_prob, 0.0, 1.0),
         mutation_add_node_prob=clamp(args.mutation_add_node_prob, 0.0, 1.0),
+        max_hidden_nodes=max(0, args.max_hidden_nodes) if args.max_hidden_nodes is not None else None,
+        max_enabled_connections=(
+            max(0, args.max_enabled_connections) if args.max_enabled_connections is not None else None
+        ),
         json_compact=not args.json_pretty,
     )
 

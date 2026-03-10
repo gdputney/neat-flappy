@@ -72,15 +72,23 @@ class Genome:
         toggle_connection_prob: float = 0.03,
         add_connection_prob: float = 0.3,
         add_node_prob: float = 0.18,
+        max_hidden_nodes: int | None = None,
+        max_enabled_connections: int | None = None,
     ) -> None:
         """Apply NEAT mutations: weights, add-node, add-connection, enable/disable toggle."""
         self._perturb_connection_weights()
 
         if random.random() < toggle_connection_prob:
             self._toggle_connection_enabled()
-        if random.random() < add_connection_prob:
+        can_add_connection = (
+            max_enabled_connections is None
+            or sum(1 for gene in self.connection_genes if gene.get("enabled", True)) < max_enabled_connections
+        )
+        if random.random() < add_connection_prob and can_add_connection:
             self._add_connection_mutation(tracker)
-        if random.random() < add_node_prob:
+        hidden_nodes = sum(1 for node in self.node_genes if node.get("type") == "hidden")
+        can_add_node = max_hidden_nodes is None or hidden_nodes < max_hidden_nodes
+        if random.random() < add_node_prob and can_add_node:
             self._add_node_mutation(tracker)
 
     def _perturb_connection_weights(self, sigma: float = 0.3, reset_chance: float = 0.1) -> None:
