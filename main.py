@@ -36,6 +36,8 @@ CENTERING_REWARD_SCALE = 1.0
 PROGRESS_REWARD_SCALE = 0.6
 PROGRESS_REWARD_CLAMP = 0.15
 ABS_GAP_ERROR_CLAMP = 1.0
+DEFAULT_REPLAY_TOP_K = 5
+DEFAULT_REPLAY_FRAME_STRIDE = 1
 
 
 @dataclass
@@ -283,6 +285,7 @@ def simulate_genome(
     pipe_spacing: float | None = None,
     record_trace: bool = False,
     trace_max_steps: int | None = None,
+    trace_frame_stride: int = 1,
     trace_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     pipe_rng = random.Random(pipe_rng_seed) if pipe_rng_seed is not None else random
@@ -330,6 +333,7 @@ def simulate_genome(
     replay_pipes: list[dict[str, float]] = []
     max_pipes_cap = config.max_pipes
     trace_cap = max(0, trace_max_steps) if trace_max_steps is not None else (None if max_pipes_cap is not None else config.max_steps)
+    trace_stride = max(1, trace_frame_stride)
 
     def record_pipe(pipe: Pipe) -> None:
         replay_pipes.append(
@@ -459,7 +463,7 @@ def simulate_genome(
                 "pipes_passed": pipes_passed,
             }
         )
-        if record_trace and (trace_cap is None or steps < trace_cap):
+        if record_trace and (trace_cap is None or steps < trace_cap) and (steps % trace_stride == 0):
             replay_frames.append(
                 {
                     "t": steps,
@@ -679,6 +683,7 @@ def evaluate_genome(
     pipe_spacing: float | None = None,
     record_replay_trace: bool = False,
     replay_max_steps: int | None = None,
+    replay_frame_stride: int = 1,
 ) -> dict[str, Any]:
     base_seed = int(config.seed or 0)
     if config.deterministic_pipes:
@@ -697,6 +702,7 @@ def evaluate_genome(
         pipe_spacing=pipe_spacing,
         record_trace=record_replay_trace,
         trace_max_steps=replay_max_steps,
+        trace_frame_stride=replay_frame_stride,
         trace_metadata={
             "generation": generation_index,
             "genome_index": genome_index,
@@ -715,8 +721,9 @@ def run_simulation(
     config: SimulationConfig,
     *,
     record_training_replay: bool = False,
-    replay_top_k: int = 20,
+    replay_top_k: int = DEFAULT_REPLAY_TOP_K,
     replay_max_steps: int | None = None,
+    replay_frame_stride: int = DEFAULT_REPLAY_FRAME_STRIDE,
 ) -> dict[str, Any]:
     if config.seed is not None:
         random.seed(config.seed)
@@ -753,6 +760,7 @@ def run_simulation(
                 pipe_spacing=effective_spacing,
                 record_replay_trace=record_training_replay,
                 replay_max_steps=replay_max_steps,
+                replay_frame_stride=replay_frame_stride,
             )
             generation_results.append(
                 {
@@ -879,7 +887,7 @@ def run_simulation(
                 reverse=True,
             )
             generation_replay_genomes = []
-            for rank, result in enumerate(sorted_by_fitness[: max(1, replay_top_k)], start=1):
+            for rank, result in enumerate(sorted_by_fitness[: replay_top_k], start=1):
                 trace = result.get("replay_trace") or {}
                 trace_frames = trace.get("frames", [])
                 generation_replay_genomes.append(
@@ -904,7 +912,7 @@ def run_simulation(
             output.setdefault("training_replay", []).append(
                 {
                     "generation": generation_index,
-                    "top_k": max(1, replay_top_k),
+                    "top_k": replay_top_k,
                     "genomes": generation_replay_genomes,
                 }
             )
@@ -1132,6 +1140,7 @@ def write_training_replay(
     config: SimulationConfig,
     output_path: Path,
     replay_top_k: int,
+    replay_frame_stride: int,
 ) -> Path:
     replay_generations = simulation_data.get("training_replay", [])
     bird_defaults = Bird(world_width=config.world_width, world_height=config.world_height)
@@ -1139,6 +1148,7 @@ def write_training_replay(
         "seed": config.seed,
         "max_steps": config.max_steps,
         "replay_top_k": replay_top_k,
+        "replay_frame_stride": replay_frame_stride,
         "flap_policy": config.flap_policy,
         "world_width": config.world_width,
         "world_height": config.world_height,
@@ -1349,14 +1359,46 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--export-web-evolution", action="store_true")
     parser.add_argument("--web-top-k", type=int, default=20)
-    parser.add_argument("--record-training-replay", action="store_true")
+    parser.add_argument(
+        "--record-training-replay",
+        action="store_true",
+        help=(
+            "Record per-generation training replay traces for top genomes. "
+            "Disabled by default because it adds noticeable runtime overhead and can consume significant disk/memory."
+        ),
+    )
     parser.add_argument(
         "--save-simulation-json",
         action="store_true",
         help="Write simulation.json in the repository root",
     )
-    parser.add_argument("--replay-top-k", type=int, default=20)
-    parser.add_argument("--replay-max-steps", type=int, default=None)
+    parser.add_argument(
+        "--replay-top-k",
+        type=int,
+        default=DEFAULT_REPLAY_TOP_K,
+        help=(
+            "How many top genomes per generation to retain when --record-training-replay is enabled. "
+            "Lower values reduce memory/disk usage and serialization cost."
+        ),
+    )
+    parser.add_argument(
+        "--replay-max-steps",
+        type=int,
+        default=None,
+        help=(
+            "Maximum frames stored per replayed genome when --record-training-replay is enabled. "
+            "If omitted, defaults to --max-steps so replay traces always remain bounded in size."
+        ),
+    )
+    parser.add_argument(
+        "--replay-frame-stride",
+        type=int,
+        default=DEFAULT_REPLAY_FRAME_STRIDE,
+        help=(
+            "Store every Nth frame in training replay traces (e.g. 2 stores half the frames). "
+            "Higher values reduce replay memory and file size at the cost of temporal detail."
+        ),
+    )
     parser.add_argument(
         "--json-pretty",
         action="store_true",
@@ -1491,15 +1533,19 @@ def main() -> None:
             print(f"Saved record replay output: {out_path}")
         return
 
+    replay_top_k = max(1, args.replay_top_k)
+    replay_frame_stride = max(1, args.replay_frame_stride)
+    if args.replay_max_steps is not None:
+        replay_max_steps = max(1, args.replay_max_steps)
+    else:
+        replay_max_steps = config.max_steps
+
     simulation_data = run_simulation(
         config,
         record_training_replay=args.record_training_replay,
-        replay_top_k=max(1, args.replay_top_k),
-        replay_max_steps=(
-            max(1, args.replay_max_steps)
-            if args.replay_max_steps is not None
-            else (None if args.max_pipes is not None else config.max_steps)
-        ),
+        replay_top_k=replay_top_k,
+        replay_max_steps=replay_max_steps,
+        replay_frame_stride=replay_frame_stride,
     )
 
     output_path = Path(__file__).resolve().parent / "simulation.json"
@@ -1547,7 +1593,8 @@ def main() -> None:
                 simulation_data,
                 config,
                 training_replay_path,
-                max(1, args.replay_top_k),
+                replay_top_k,
+                replay_frame_stride,
             )
 
         completed_tasks: dict[str, Any] = {}
