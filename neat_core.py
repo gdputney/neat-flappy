@@ -187,24 +187,16 @@ class Genome:
         self._repair_cycles_in_enabled_graph()
         enabled_edges = [gene for gene in self.connection_genes if gene.get("enabled", True)]
 
-        indegree = {int(node["id"]): 0 for node in self.node_genes}
-        outgoing: dict[int, list[dict[str, Any]]] = {int(node["id"]): [] for node in self.node_genes}
+        node_ids = [int(node["id"]) for node in self.node_genes]
+        indegree = {node_id: 0 for node_id in node_ids}
+        outgoing: dict[int, list[dict[str, Any]]] = {node_id: [] for node_id in node_ids}
         for edge in enabled_edges:
             in_node = int(edge["in_node"])
             out_node = int(edge["out_node"])
             indegree[out_node] = indegree.get(out_node, 0) + 1
             outgoing.setdefault(in_node, []).append(edge)
 
-        queue: deque[int] = deque(node_id for node_id, degree in indegree.items() if degree == 0)
-        topo_order: list[int] = []
-        while queue:
-            current = queue.popleft()
-            topo_order.append(current)
-            for edge in outgoing.get(current, []):
-                out_node = int(edge["out_node"])
-                indegree[out_node] -= 1
-                if indegree[out_node] == 0:
-                    queue.append(out_node)
+        topo_order = self._kahn_topological_order(node_ids, indegree, outgoing)
 
         incoming_map: dict[int, list[dict[str, Any]]] = {int(node["id"]): [] for node in self.node_genes}
         for edge in enabled_edges:
@@ -358,9 +350,10 @@ class Genome:
             self._compile_dirty = True
 
     def _enabled_cyclic_nodes(self) -> set[int]:
-        node_ids = {int(node["id"]) for node in self.node_genes}
-        indegree = {node_id: 0 for node_id in node_ids}
-        outgoing: dict[int, list[int]] = {node_id: [] for node_id in node_ids}
+        ordered_node_ids = [int(node["id"]) for node in self.node_genes]
+        node_ids = set(ordered_node_ids)
+        indegree = {node_id: 0 for node_id in ordered_node_ids}
+        outgoing: dict[int, list[int]] = {node_id: [] for node_id in ordered_node_ids}
 
         for gene in self.connection_genes:
             if not gene.get("enabled", True):
@@ -370,17 +363,27 @@ class Genome:
             outgoing.setdefault(in_node, []).append(out_node)
             indegree[out_node] = indegree.get(out_node, 0) + 1
 
-        queue: deque[int] = deque(node_id for node_id, degree in indegree.items() if degree == 0)
-        processed: set[int] = set()
+        processed = set(self._kahn_topological_order(ordered_node_ids, indegree, outgoing))
+
+        return node_ids - processed
+
+    @staticmethod
+    def _kahn_topological_order(
+        ordered_node_ids: list[int],
+        indegree: dict[int, int],
+        outgoing: dict[int, list[Any]],
+    ) -> list[int]:
+        queue: deque[int] = deque(node_id for node_id in ordered_node_ids if indegree.get(node_id, 0) == 0)
+        topo_order: list[int] = []
         while queue:
             current = queue.popleft()
-            processed.add(current)
-            for out_node in outgoing.get(current, []):
+            topo_order.append(current)
+            for edge in outgoing.get(current, []):
+                out_node = int(edge["out_node"]) if isinstance(edge, dict) else int(edge)
                 indegree[out_node] -= 1
                 if indegree[out_node] == 0:
                     queue.append(out_node)
-
-        return node_ids - processed
+        return topo_order
 
     def _topological_rank(self) -> dict[int, int]:
         input_ids = [int(node["id"]) for node in self._nodes_by_type("input")]
